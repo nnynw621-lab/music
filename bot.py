@@ -10,11 +10,9 @@ import telebot
 from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
 import yt_dlp
 
-# ==================== إعدادات البيئة لـ Railway ====================
-DB_PATH = os.environ.get("DATABASE_PATH", "/tmp/bot_maker.db")
-API_ID = int(os.environ.get("API_ID", "12345678"))
-API_HASH = os.environ.get("API_HASH", "your_api_hash_here")
-DEV_ID = int(os.environ.get("DEV_ID", "123456789"))
+# إعدادات الحساب المساعد الأساسية
+API_ID = int(os.environ.get("API_ID", "38237681"))
+API_HASH = os.environ.get("API_HASH", "b0eef144db9e6cc377d2853fed9007b2")
 
 # ==================== التحقق من وضع التشغيل (صانع أم بوت فرعي) ====================
 if len(sys.argv) >= 2:
@@ -22,13 +20,13 @@ if len(sys.argv) >= 2:
   TOKEN = sys.argv[1]
   bot = telebot.TeleBot(TOKEN)
 
-  conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+  conn = sqlite3.connect("bot_maker.db", check_same_thread=False)
   cursor = conn.cursor()
 
   try:
     bot_info = bot.get_me()
     BOT_USERNAME = bot_info.username
-  except Exception:
+  except:
     BOT_USERNAME = "Bot"
 
 
@@ -63,7 +61,6 @@ if len(sys.argv) >= 2:
     keyboard = InlineKeyboardMarkup(row_width=2)
 
     if bot_type == "vip":
-      # أزرار بوت الـ VIP (بوت المنشئ + اضفني لقناتك/كروبك + نينو)
       keyboard.add(InlineKeyboardButton(f"🤖 {creator_text}", url=creator_link))
       keyboard.add(
           InlineKeyboardButton(
@@ -73,7 +70,6 @@ if len(sys.argv) >= 2:
       )
       keyboard.add(InlineKeyboardButton(f"💎 {nino_text}", url=nino_link))
     else:
-      # أزرار الخطة المجانية (اضفني لقناتك/كروبك + بوت المنشئ)
       keyboard.add(
           InlineKeyboardButton(
               "➕ اضفني لقناتك/كروبك",
@@ -82,7 +78,6 @@ if len(sys.argv) >= 2:
       )
       keyboard.add(InlineKeyboardButton(f"🤖 {creator_text}", url=creator_link))
 
-      # أزرار الحقوق الإضافية للمجاني (SG SOURCE, ADD, X) حسب إعدادات المشرف
       cursor.execute("SELECT value FROM settings WHERE key = 'sg_source_btn'")
       sg = cursor.fetchone()
       if sg and sg[0] == "true":
@@ -136,7 +131,7 @@ if len(sys.argv) >= 2:
       with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([video_url])
         return f"downloads/{video_id}.mp3", video_title
-    except Exception:
+    except:
       return None, None
 
 
@@ -149,9 +144,10 @@ if len(sys.argv) >= 2:
       return None, "⚠️ تنبيه: لا توجد حسابات مساعدين مضافة في النظام!"
 
     session_string = ast[0]
+    client = None
     try:
       client = Client(
-          f"session_{chat_id}",
+          f"session_{chat_id}_{os.getpid()}",
           api_id=API_ID,
           api_hash=API_HASH,
           session_string=session_string,
@@ -173,6 +169,8 @@ if len(sys.argv) >= 2:
       await call_py.play(chat_id, AudioPiped(url))
       return title, None
     except Exception as e:
+      if client and client.is_connected:
+        await client.stop()
       return None, f"❌ خطأ أثناء التشغيل الصوتي: {e}"
 
 
@@ -250,7 +248,7 @@ if len(sys.argv) >= 2:
       bot.delete_message(message.chat.id, sent_msg.message_id)
       try:
         os.remove(file_path)
-      except Exception:
+      except:
         pass
     else:
       bot.edit_message_text(
@@ -300,15 +298,14 @@ if len(sys.argv) >= 2:
 
 else:
   # ======== تشغيل بوت المصنع الرئيسي (Creator Bot) ========
-  CREATOR_BOT_TOKEN = os.environ.get("CREATOR_BOT_TOKEN") or os.environ.get("BOT_TOKEN")
-  if not CREATOR_BOT_TOKEN:
-    raise RuntimeError("CREATOR_BOT_TOKEN أو BOT_TOKEN غير مضبوط في متغيرات البيئة.")
+  CREATOR_BOT_TOKEN = os.environ.get("CREATOR_BOT_TOKEN", "YOUR_CREATOR_TOKEN")
+  DEV_ID = int(os.environ.get("DEV_ID", "105405258"))
 
   bot = telebot.TeleBot(CREATOR_BOT_TOKEN)
   active_bots = {}
   user_states = {}
 
-  conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+  conn = sqlite3.connect("bot_maker.db", check_same_thread=False)
   cursor = conn.cursor()
 
   # إنشاء الجداول الأساسية
@@ -351,7 +348,7 @@ else:
   )
   cursor.execute(
       "INSERT OR IGNORE INTO settings (key, value) VALUES ('creator_btn_text',"
-      " 'بوت ��لمنشئ')"
+      " 'بوت المنشئ')"
   )
   cursor.execute(
       "INSERT OR IGNORE INTO settings (key, value) VALUES ('creator_btn_link',"
@@ -377,7 +374,7 @@ else:
   )
   conn.commit()
 
-  # 🔄 إعادة تشغيل جميع البوتات الفرعية تلقائياً عند إقلاع السيرفر (Railway)
+  # إعادة تشغيل البوتات الفرعية عند الإقلاع
   cursor.execute("SELECT bot_token FROM created_bots")
   for row in cursor.fetchall():
     b_token = row[0]
@@ -488,7 +485,7 @@ else:
         )
       else:
         text = (
-            "🤖 **خطوات إنشاء بوت ميوزك مجاني:**\n\n1. اذهب إلى بوت ��نع بوتات"
+            "🤖 **خطوات إنشاء بوت ميوزك مجاني:**\n\n1. اذهب إلى بوت صنع بوتات"
             " الرسمي: @BotFather\n2. أنشئ بوت جديد واحصل على الـ"
             " (Token).\n3. أرسل التوكن هنا بالشكل التالي:\n\n`/create [التوكن"
             " الخاص بك]`"
@@ -818,7 +815,6 @@ else:
       cursor.execute("DELETE FROM assistants WHERE id = ?", (ast_id,))
       conn.commit()
       bot.answer_callback_query(call.id, "✅ تم حذف المساعد بنجاح.")
-      # تحديث القائمة فوراً
       cursor.execute("SELECT id FROM assistants")
       asts = cursor.fetchall()
       keyboard = InlineKeyboardMarkup(row_width=1)
@@ -860,7 +856,6 @@ else:
     text = message.text.strip() if message.text else ""
     user_states.pop(user_id, None)
 
-    # معالجة تعديل زر الـ VIP
     if state == "waiting_vip_text" and is_admin(user_id):
       cursor.execute(
           "INSERT OR REPLACE INTO settings (key, value) VALUES ('vip_btn_text',"
@@ -887,7 +882,6 @@ else:
       bot.reply_to(message, "✅ **تم تحديث زر اصنع VIP بنجاح!**", parse_mode="Markdown")
       return
 
-    # معالجة تعديل زر نينو
     elif state == "waiting_nino_text" and is_admin(user_id):
       try:
         name, link = text.split("|")
@@ -903,11 +897,10 @@ else:
         )
         conn.commit()
         bot.reply_to(message, "✅ تم تحديث زر 'نينو' ورابطه بنجاح.")
-      except Exception:
+      except:
         bot.reply_to(message, "❌ خطأ بالصيغة. استخدم: الاسم | الرابط")
       return
 
-    # معالجة تعديل بوت المنشئ
     elif state == "waiting_creator_btn" and is_admin(user_id):
       try:
         name, link = text.split("|")
@@ -923,11 +916,10 @@ else:
         )
         conn.commit()
         bot.reply_to(message, "✅ تم تحديث زر 'بوت المنشئ' ورابطه بنجاح.")
-      except Exception:
+      except:
         bot.reply_to(message, "❌ خطأ بالصيغة. استخدم: الاسم | الرابط")
       return
 
-    # إنشاء بوت VIP خالي من الحقوق للمشرف
     elif state == "waiting_norights_token" and is_admin(user_id):
       try:
         process = subprocess.Popen(["python", __file__, text])
@@ -962,7 +954,7 @@ else:
               message_id=message.message_id,
           )
           sent += 1
-        except Exception:
+        except:
           failed += 1
       bot.edit_message_text(
           f"✅ **تمت الإذاعة:**\n• نجاح: `{sent}`\n• فشل: `{failed}`",
@@ -983,7 +975,7 @@ else:
               message_id=message.message_id,
           )
           sent += 1
-        except Exception:
+        except:
           failed += 1
       bot.edit_message_text(
           f"✅ **تم التوجيه:**\n• نجاح: `{sent}`\n• فشل: `{failed}`",
@@ -998,7 +990,7 @@ else:
         cursor.execute("INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (new_id,))
         conn.commit()
         bot.reply_to(message, f"✅ تم إضافة المشرف `{new_id}` بنجاح.")
-      except Exception:
+      except:
         bot.reply_to(message, "❌ أرسل الآيدي أرقاماً صحيحة.")
 
     elif state == "waiting_remove_admin":
@@ -1007,7 +999,7 @@ else:
         cursor.execute("DELETE FROM admins WHERE user_id = ?", (rem_id,))
         conn.commit()
         bot.reply_to(message, f"🗑️ تم إزالة المشرف `{rem_id}`.")
-      except Exception:
+      except:
         bot.reply_to(message, "❌ أرسل الآيدي أرقاماً صحيحة.")
 
     elif state == "waiting_add_assistant":
@@ -1059,3 +1051,4 @@ else:
 
   print("Main Creator Bot is running completely with all features...")
   bot.infinity_polling()
+
