@@ -10,9 +10,11 @@ import telebot
 from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
 import yt_dlp
 
-# إعدادات الحساب المساعد الأساسية
+# ==================== إعدادات البيئة لـ Railway ====================
+DB_PATH = os.environ.get("DATABASE_PATH", "/tmp/bot_maker.db")
 API_ID = int(os.environ.get("API_ID", "12345678"))
 API_HASH = os.environ.get("API_HASH", "your_api_hash_here")
+DEV_ID = int(os.environ.get("DEV_ID", "123456789"))
 
 # ==================== التحقق من وضع التشغيل (صانع أم بوت فرعي) ====================
 if len(sys.argv) >= 2:
@@ -20,13 +22,13 @@ if len(sys.argv) >= 2:
   TOKEN = sys.argv[1]
   bot = telebot.TeleBot(TOKEN)
 
-  conn = sqlite3.connect("bot_maker.db", check_same_thread=False)
+  conn = sqlite3.connect(DB_PATH, check_same_thread=False)
   cursor = conn.cursor()
 
   try:
     bot_info = bot.get_me()
     BOT_USERNAME = bot_info.username
-  except:
+  except Exception:
     BOT_USERNAME = "Bot"
 
 
@@ -134,7 +136,7 @@ if len(sys.argv) >= 2:
       with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([video_url])
         return f"downloads/{video_id}.mp3", video_title
-    except:
+    except Exception:
       return None, None
 
 
@@ -248,7 +250,7 @@ if len(sys.argv) >= 2:
       bot.delete_message(message.chat.id, sent_msg.message_id)
       try:
         os.remove(file_path)
-      except:
+      except Exception:
         pass
     else:
       bot.edit_message_text(
@@ -298,14 +300,15 @@ if len(sys.argv) >= 2:
 
 else:
   # ======== تشغيل بوت المصنع الرئيسي (Creator Bot) ========
-  CREATOR_BOT_TOKEN = os.environ.get("CREATOR_BOT_TOKEN", "YOUR_CREATOR_TOKEN")
-  DEV_ID = int(os.environ.get("DEV_ID", "123456789"))
+  CREATOR_BOT_TOKEN = os.environ.get("CREATOR_BOT_TOKEN") or os.environ.get("BOT_TOKEN")
+  if not CREATOR_BOT_TOKEN:
+    raise RuntimeError("CREATOR_BOT_TOKEN أو BOT_TOKEN غير مضبوط في متغيرات البيئة.")
 
   bot = telebot.TeleBot(CREATOR_BOT_TOKEN)
   active_bots = {}
   user_states = {}
 
-  conn = sqlite3.connect("bot_maker.db", check_same_thread=False)
+  conn = sqlite3.connect(DB_PATH, check_same_thread=False)
   cursor = conn.cursor()
 
   # إنشاء الجداول الأساسية
@@ -348,7 +351,7 @@ else:
   )
   cursor.execute(
       "INSERT OR IGNORE INTO settings (key, value) VALUES ('creator_btn_text',"
-      " 'بوت المنشئ')"
+      " 'بوت ��لمنشئ')"
   )
   cursor.execute(
       "INSERT OR IGNORE INTO settings (key, value) VALUES ('creator_btn_link',"
@@ -485,7 +488,7 @@ else:
         )
       else:
         text = (
-            "🤖 **خطوات إنشاء بوت ميوزك مجاني:**\n\n1. اذهب إلى بوت صنع بوتات"
+            "🤖 **خطوات إنشاء بوت ميوزك مجاني:**\n\n1. اذهب إلى بوت ��نع بوتات"
             " الرسمي: @BotFather\n2. أنشئ بوت جديد واحصل على الـ"
             " (Token).\n3. أرسل التوكن هنا بالشكل التالي:\n\n`/create [التوكن"
             " الخاص بك]`"
@@ -900,7 +903,7 @@ else:
         )
         conn.commit()
         bot.reply_to(message, "✅ تم تحديث زر 'نينو' ورابطه بنجاح.")
-      except:
+      except Exception:
         bot.reply_to(message, "❌ خطأ بالصيغة. استخدم: الاسم | الرابط")
       return
 
@@ -920,7 +923,7 @@ else:
         )
         conn.commit()
         bot.reply_to(message, "✅ تم تحديث زر 'بوت المنشئ' ورابطه بنجاح.")
-      except:
+      except Exception:
         bot.reply_to(message, "❌ خطأ بالصيغة. استخدم: الاسم | الرابط")
       return
 
@@ -959,7 +962,7 @@ else:
               message_id=message.message_id,
           )
           sent += 1
-        except:
+        except Exception:
           failed += 1
       bot.edit_message_text(
           f"✅ **تمت الإذاعة:**\n• نجاح: `{sent}`\n• فشل: `{failed}`",
@@ -980,7 +983,7 @@ else:
               message_id=message.message_id,
           )
           sent += 1
-        except:
+        except Exception:
           failed += 1
       bot.edit_message_text(
           f"✅ **تم التوجيه:**\n• نجاح: `{sent}`\n• فشل: `{failed}`",
@@ -995,7 +998,7 @@ else:
         cursor.execute("INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (new_id,))
         conn.commit()
         bot.reply_to(message, f"✅ تم إضافة المشرف `{new_id}` بنجاح.")
-      except:
+      except Exception:
         bot.reply_to(message, "❌ أرسل الآيدي أرقاماً صحيحة.")
 
     elif state == "waiting_remove_admin":
@@ -1004,7 +1007,7 @@ else:
         cursor.execute("DELETE FROM admins WHERE user_id = ?", (rem_id,))
         conn.commit()
         bot.reply_to(message, f"🗑️ تم إزالة المشرف `{rem_id}`.")
-      except:
+      except Exception:
         bot.reply_to(message, "❌ أرسل الآيدي أرقاماً صحيحة.")
 
     elif state == "waiting_add_assistant":
@@ -1056,4 +1059,3 @@ else:
 
   print("Main Creator Bot is running completely with all features...")
   bot.infinity_polling()
-
