@@ -1,587 +1,1059 @@
+import asyncio
 import os
 import sqlite3
+import subprocess
+import sys
+from pyrogram import Client
+from pytgcalls import PyTgCalls
+from pytgcalls.types import AudioPiped
 import telebot
-from telebot import types
+from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
+import yt_dlp
 
-try:
-  import psutil
-except ImportError:
-  psutil = None
+# إعدادات الحساب المساعد الأساسية
+API_ID = int(os.environ.get("API_ID", "12345678"))
+API_HASH = os.environ.get("API_HASH", "your_api_hash_here")
 
-# ==========================================
-# إعدادات البوت والبيئة
-# ==========================================
-TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
-ADMIN_IDS = [
-    123456789
-]  # استبدل هذا الرقم بآيدي حسابك الحقيقي لفتح لوحة المطورين
+# ==================== التحقق من وضع التشغيل (صانع أم بوت فرعي) ====================
+if len(sys.argv) >= 2:
+  # ======== تشغيل بوت الميوزك الفرعي (مجاني أو VIP) ========
+  TOKEN = sys.argv[1]
+  bot = telebot.TeleBot(TOKEN)
 
-bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
-
-# ==========================================
-# قاعدة البيانات الشاملة (SQLite)
-# ==========================================
-conn = sqlite3.connect("mega_music_bot.db", check_same_thread=False)
-cursor = conn.cursor()
-
-cursor.execute(
-    """
-CREATE TABLE IF NOT EXISTS users (
-    user_id INTEGER PRIMARY KEY,
-    username TEXT,
-    joined_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    is_banned INTEGER DEFAULT 0,
-    is_vip INTEGER DEFAULT 0
-)
-"""
-)
-
-cursor.execute(
-    """
-CREATE TABLE IF NOT EXISTS sub_bots (
-    bot_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    owner_id INTEGER,
-    bot_token TEXT UNIQUE,
-    bot_username TEXT,
-    status TEXT DEFAULT 'active'
-)
-"""
-)
-
-cursor.execute(
-    """
-CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT
-)
-"""
-)
-conn.commit()
-
-
-def is_admin(user_id):
-  return user_id in ADMIN_IDS
-
-
-# ==========================================
-# الواجهة الرئيسية للمستخدم (Start)
-# ==========================================
-@bot.message_handler(commands=["start"])
-def cmd_start(message):
-  user_id = message.from_user.id
-  username = message.from_user.username or "No_Username"
-
-  cursor.execute("SELECT is_banned FROM users WHERE user_id = ?", (user_id,))
-  row = cursor.fetchone()
-  if row and row[0] == 1:
-    bot.reply_to(message, "❌ عذراً، تم حظرك من استخدام هذه المنصة.")
-    return
-
-  if not row:
-    cursor.execute(
-        "INSERT OR IGNORE INTO users (user_id, username) VALUES (?, ?)",
-        (user_id, username),
-    )
-    conn.commit()
-
-  markup = types.InlineKeyboardMarkup(row_width=2)
-  markup.add(
-      types.InlineKeyboardButton(
-          "🟢 صنع بوت ميوزك جديد", callback_data="user:create_bot"
-      ),
-      types.InlineKeyboardButton(
-          "🔵 حسابي وإحصائياتي", callback_data="user:account"
-      ),
-  )
-
-  bot.send_message(
-      message.chat.id,
-      f"أهلاً بك يا <b>{message.from_user.first_name}</b> في منصة بوتات"
-      " الميوزك الشاملة 🎶\nأنشئ بوتك الخاص الآن وقم بإدارته بكل سهولة!",
-      reply_markup=markup,
-  )
-
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("user:"))
-def handle_user_callbacks(call):
-  user_id = call.from_user.id
-  action = call.data.split(":")[1]
-
-  if action == "create_bot":
-    bot.answer_callback_query(call.id)
-    msg = bot.send_message(
-        call.message.chat.id,
-        "🔹 أرسل الآن <b>توكن البوت (Token)</b> الذي استخرجته من @BotFather:\n*(أو"
-        " أرسل /cancel للإلغاء)*",
-    )
-    bot.register_next_step_handler(msg, process_save_sub_bot)
-
-  elif action == "account":
-    cursor.execute(
-        "SELECT COUNT(*) FROM sub_bots WHERE owner_id = ?", (user_id,)
-    )
-    bots_count = cursor.fetchone()[0]
-    bot.answer_callback_query(call.id)
-    bot.send_message(
-        call.message.chat.id,
-        f"👤 <b>حسابك الشخصي:</b>\n🆔 الآيدي: <code>{user_id}</code>\n🤖 عدد"
-        f" بوتاتك: {bots_count}",
-    )
-
-
-def process_save_sub_bot(message):
-  if message.text == "/cancel":
-    bot.reply_to(message, "تم إلغاء الإنشاء.")
-    return
-  user_id = message.from_user.id
-  token = message.text.strip()
-  try:
-    temp_bot = telebot.TeleBot(token)
-    bot_info = temp_bot.get_me()
-    bot_username = bot_info.username
-  except Exception:
-    bot.reply_to(
-        message,
-        "❌ <b>التوكن غير صالح!</b> تأكد من نسخه بدقة من @BotFather.",
-    )
-    return
+  conn = sqlite3.connect("bot_maker.db", check_same_thread=False)
+  cursor = conn.cursor()
 
   try:
+    bot_info = bot.get_me()
+    BOT_USERNAME = bot_info.username
+  except:
+    BOT_USERNAME = "Bot"
+
+
+  def get_bot_keyboard():
     cursor.execute(
-        "INSERT INTO sub_bots (owner_id, bot_token, bot_username) VALUES"
-        " (?, ?, ?)",
-        (user_id, token, bot_username),
+        "SELECT rights, bot_type FROM created_bots WHERE bot_token = ?",
+        (TOKEN,),
     )
-    conn.commit()
-    bot.reply_to(
-        message,
-        f"✅ <b>تم إنشاء بوت الميوزك بنجاح!</b>\n🤖 المعرف: @{bot_username}",
-    )
-  except sqlite3.IntegrityError:
-    bot.reply_to(message, "⚠️ هذا التوكن مستخدم مسبقاً في النظام!")
+    row = cursor.fetchone()
+    bot_rights = row[0] if row else "with_rights"
+    bot_type = row[1] if row else "free"
 
+    # إذا كان البوت VIP خالي من الحقوق تماماً
+    if bot_rights == "no_rights":
+      return None
 
-# ==========================================
-# معالجة أوامر الاتصال والجات (تشغيل، بحث، تنزيل، نزل، يوت)
-# ==========================================
-@bot.message_handler(
-    func=lambda message: message.text
-    and any(
-        message.text.startswith(word)
-        for word in ["تشغيل", "بحث", "تنزيل", "نزل", "يوت"]
-    )
-)
-def handle_media_commands(message):
-  text = message.text.strip()
+    # جلب بيانات الأزرار العامة من قاعدة البيانات
+    cursor.execute("SELECT value FROM settings WHERE key = 'creator_btn_text'")
+    t_res = cursor.fetchone()
+    cursor.execute("SELECT value FROM settings WHERE key = 'creator_btn_link'")
+    l_res = cursor.fetchone()
+    creator_text = t_res[0] if t_res else "بوت المنشئ"
+    creator_link = l_res[0] if l_res else "https://t.me/YourCreatorBot"
 
-  # أوامر الاتصال الصوتي (Voice Chat)
-  if text.startswith("تشغيل") or text.startswith("بحث"):
-    query = text.replace("تشغيل", "").replace("بحث", "").strip()
-    if not query:
-      bot.reply_to(
-          message,
-          "⚠️ يرجى كتابة اسم الأغنية.\nمثال: <code>تشغيل تخون بيه</code>",
-      )
-      return
+    cursor.execute("SELECT value FROM settings WHERE key = 'nino_btn_text'")
+    n_res = cursor.fetchone()
+    cursor.execute("SELECT value FROM settings WHERE key = 'nino_btn_link'")
+    nl_res = cursor.fetchone()
+    nino_text = n_res[0] if n_res else "نينو"
+    nino_link = nl_res[0] if nl_res else "https://t.me/YourChannel"
 
-    send_music_player(
-        message.chat.id,
-        song_name=query,
-        duration="05:50",
-        source_name="SG SOURCE",
-        source_url="https://t.me/YourChannel",
-    )
+    keyboard = InlineKeyboardMarkup(row_width=2)
 
-  # أوامر الجات النصي (تنزيل ملفات)
-  elif (
-      text.startswith("تنزيل") or text.startswith("نزل") or text.startswith("يوت")
-  ):
-    query = (
-        text.replace("تنزيل", "")
-        .replace("نزل", "")
-        .replace("يوت", "")
-        .strip()
-    )
-    if not query:
-      bot.reply_to(
-          message, "⚠️ يرجى كتابة اسم الطلب.\nمثال: <code>نزل تخون بيه</code>"
-      )
-      return
-
-    bot.reply_to(
-        message,
-        f"📥 <b>جاري البحث والتحميل للجات:</b>\n🔍 {query}\n(يرجى الانتظار"
-        " قليلاً...)",
-    )
-
-
-# ==========================================
-# دالة مشغل الموسيقى التفاعلي (مع الأزرار والروابط)
-# ==========================================
-def send_music_player(
-    chat_id,
-    song_name,
-    duration,
-    source_name="SG SOURCE",
-    source_url="https://t.me/YourChannel",
-):
-  msg_text = (
-      f"🎶 - <b>تم تشغيل :</b> {song_name}\n"
-      f"⏱ - <b>مدة التشغيل :</b> {duration}\n"
-      "🔊 - <b>الحالة :</b> يعمل الآن في المكالمة الصوتية"
-  )
-
-  markup = types.InlineKeyboardMarkup(row_width=3)
-  markup.add(
-      types.InlineKeyboardButton("تخطي", callback_data="music:skip"),
-      types.InlineKeyboardButton("إنهاء", callback_data="music:stop"),
-      types.InlineKeyboardButton("إيقاف", callback_data="music:pause"),
-  )
-  markup.add(
-      types.InlineKeyboardButton("-10s", callback_data="music:seek_back"),
-      types.InlineKeyboardButton("▷", callback_data="music:resume"),
-      types.InlineKeyboardButton("+10s", callback_data="music:seek_forward"),
-  )
-  markup.add(types.InlineKeyboardButton(source_name, url=source_url))
-  markup.add(types.InlineKeyboardButton("ADD", callback_data="music:add"))
-  markup.add(types.InlineKeyboardButton("❌", callback_data="music:close"))
-
-  bot.send_message(chat_id, msg_text, reply_markup=markup)
-
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("music:"))
-def handle_music_controls_fixed(call):
-  action = call.data.split(":")[1]
-  chat_id = call.message.chat.id
-
-  if action == "skip":
-    bot.answer_callback_query(call.id, "⏭ تم تخطي الأغنية الحالية بنجاح")
-  elif action == "stop":
-    bot.answer_callback_query(call.id, "⏹ تم إنهاء المشغل وإيقاف البث")
-    try:
-      bot.delete_message(chat_id, call.message.message_id)
-    except Exception:
-      pass
-  elif action == "pause":
-    bot.answer_callback_query(call.id, "⏸ تم إيقاف التشغيل مؤقتاً")
-  elif action == "resume":
-    bot.answer_callback_query(call.id, "▶️ تم استئناف التشغيل بنجاح")
-  elif action == "seek_back":
-    bot.answer_callback_query(call.id, "⏪ تم ترجيع البث 10 ثواني للخلف")
-  elif action == "seek_forward":
-    bot.answer_callback_query(call.id, "⏩ تم تقديم البث 10 ثواني للأمام")
-  elif action == "add":
-    bot.answer_callback_query(call.id)
-    msg = bot.send_message(
-        chat_id, "➕ أرسل الآن اسم أو رابط الأغنية لإضافتها لقائمة الانتظار:"
-    )
-    bot.register_next_step_handler(
-        msg,
-        lambda m: bot.reply_to(
-            m, f"✅ تم إضافة الطلب ({m.text}) إلى قائمة الانتظار بنجاح!"
-        ),
-    )
-  elif action == "close":
-    try:
-      bot.delete_message(chat_id, call.message.message_id)
-    except Exception:
-      pass
-
-
-# ==========================================
-# قاموس الأقسام الـ 30 لإدارة المطور (شاملة)
-# ==========================================
-ADMIN_SECTIONS = {
-    1: "📊 المؤشرات العامة والإحصائيات",
-    2: "🖥 مراقبة السيرفر والمعالج",
-    3: "👥 إدارة المشرفين المساعدين",
-    4: "⚙️ إعدادات البوت العامة",
-    5: "📢 إدارة الإذاعة والتوجيه",
-    6: "🔍 فحص بيانات مستخدم",
-    7: "⛔️ إدارة الحظر والعقوبات",
-    8: "⭐ إدارة المشتركين VIP",
-    9: "📝 سجل الأخطاء والـ Logs",
-    10: "📈 تقارير الأداء التفصيلية",
-    11: "🤖 إدارة البوتات الفرعية",
-    12: "💬 تعديل رسالة البدء (Start)",
-    13: "🔗 قنوات الاشتراكات الإجبارية",
-    14: "🎟 إدارة الكوبونات والأكواد",
-    15: "👋 رسائل الترحيب التلقائية",
-    16: "📢 الإذاعة العامة لكل المستخدمين",
-    17: "📢 إذاعة خاصة للمشرفين",
-    18: "💾 نسخة احتياطية للقاعدة",
-    19: "♻️ استعادة نسخة احتياطية",
-    20: "🔄 إعادة تشغيل البوت برمجياً",
-    21: "⭐ نظام نجوم تيليجرام",
-    22: "💳 إدارة الباقات والأسعار",
-    23: "🌐 فحص حالة الاتصال والسيرفر",
-    24: "🧹 تصفية المستخدمين الوهميين",
-    25: "📋 سجل العمليات الأخيرة",
-    26: "🔒 إعدادات الأمان والحماية",
-    27: "🔗 تحديث روابط السورس (Source)",
-    28: "🚨 رسائل الطوارئ والصيانة",
-    29: "🛑 تفعيل وضع الطوارئ",
-    30: "💾 النسخ الاحتياطي الشامل للنظام",
-}
-
-
-@bot.message_handler(commands=["admin"])
-def cmd_admin(message):
-  if not is_admin(message.from_user.id):
-    return
-
-  markup = types.InlineKeyboardMarkup(row_width=2)
-  for sec_id, sec_name in ADMIN_SECTIONS.items():
-    markup.add(
-        types.InlineKeyboardButton(
-            sec_name, callback_data=f"adm:sec:{sec_id}"
-        )
-    )
-  markup.add(types.InlineKeyboardButton("❌ إغلاق اللوحة", callback_data="adm:close"))
-
-  bot.send_message(
-      message.chat.id,
-      "🎛 <b>غرفة العمليات المركزية (الأقسام الـ 30 كاملة)</b>\nاختر القسم المطلوب:",
-      reply_markup=markup,
-  )
-
-
-# ==========================================
-# معالجة تفاعلية حقيقية لجميع أزرار لوحة المطورين
-# ==========================================
-@bot.callback_query_handler(func=lambda call: call.data.startswith("adm:"))
-def handle_admin_actions(call):
-  if not is_admin(call.from_user.id):
-    bot.answer_callback_query(call.id, "للمطورين فقط!", show_alert=True)
-    return
-
-  data = call.data.split(":")
-
-  if data[1] == "close":
-    try:
-      bot.delete_message(call.message.chat.id, call.message.message_id)
-    except Exception:
-      pass
-    return
-
-  elif data[1] == "sec":
-    sec_id = int(data[2])
-    sec_title = ADMIN_SECTIONS.get(sec_id, f"القسم {sec_id}")
-    markup = types.InlineKeyboardMarkup(row_width=1)
-
-    if sec_id == 1:
-      cursor.execute("SELECT COUNT(*) FROM users")
-      u_count = cursor.fetchone()[0]
-      cursor.execute("SELECT COUNT(*) FROM sub_bots")
-      b_count = cursor.fetchone()[0]
-      text = (
-          f"📂 <b>{sec_title}</b>\n\n👥 إجمالي المستخدمين:"
-          f" <b>{u_count}</b>\n🤖 البوتات الفرعية: <b>{b_count}</b>"
-      )
-      markup.add(
-          types.InlineKeyboardButton(
-              "🔄 تحديث المؤشرات", callback_data="adm:sec:1"
+    if bot_type == "vip":
+      # أزرار بوت الـ VIP (بوت المنشئ + اضفني لقناتك/كروبك + نينو)
+      keyboard.add(InlineKeyboardButton(f"🤖 {creator_text}", url=creator_link))
+      keyboard.add(
+          InlineKeyboardButton(
+              "➕ اضفني لقناتك/كروبك",
+              url=f"https://t.me/{BOT_USERNAME}?startgroup=true",
           )
       )
+      keyboard.add(InlineKeyboardButton(f"💎 {nino_text}", url=nino_link))
+    else:
+      # أزرار الخطة المجانية (اضفني لقناتك/كروبك + بوت المنشئ)
+      keyboard.add(
+          InlineKeyboardButton(
+              "➕ اضفني لقناتك/كروبك",
+              url=f"https://t.me/{BOT_USERNAME}?startgroup=true",
+          )
+      )
+      keyboard.add(InlineKeyboardButton(f"🤖 {creator_text}", url=creator_link))
 
-    elif sec_id == 2:
-      if psutil:
-        cpu = psutil.cpu_percent(interval=0.5)
-        ram = psutil.virtual_memory().percent
-        text = (
-            f"📂 <b>{sec_title}</b>\n\n🖥 استهلاك المعالج (CPU):"
-            f" <b>{cpu}%</b>\n🧠 استهلاك الذاكرة (RAM): <b>{ram}%</b>"
+      # أزرار الحقوق الإضافية للمجاني (SG SOURCE, ADD, X) حسب إعدادات المشرف
+      cursor.execute("SELECT value FROM settings WHERE key = 'sg_source_btn'")
+      sg = cursor.fetchone()
+      if sg and sg[0] == "true":
+        keyboard.add(
+            InlineKeyboardButton(
+                "SG SOURCE", url="https://t.me/YourSourceChannel"
+            )
         )
+
+      cursor.execute("SELECT value FROM settings WHERE key = 'add_btn'")
+      add = cursor.fetchone()
+      if add and add[0] == "true":
+        keyboard.add(
+            InlineKeyboardButton(
+                "ADD", url=f"https://t.me/{BOT_USERNAME}?startgroup=true"
+            )
+        )
+
+      cursor.execute("SELECT value FROM settings WHERE key = 'x_btn'")
+      x = cursor.fetchone()
+      if x and x[0] == "true":
+        keyboard.add(
+            InlineKeyboardButton("X", url="https://t.me/YourDeveloperAccount")
+        )
+
+    return keyboard
+
+
+  def search_and_download_audio(query):
+    ydl_opts = {
+        "format": "bestaudio/best",
+        "postprocessors": [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "192",
+        }],
+        "outtmpl": "downloads/%(id)s.%(ext)s",
+        "quiet": True,
+    }
+    os.makedirs("downloads", exist_ok=True)
+    try:
+      with yt_dlp.YoutubeDL({"format": "bestaudio", "quiet": True}) as ydl:
+        info = ydl.extract_info(f"ytsearch:{query}", download=False)
+        if "entries" in info and info["entries"]:
+          video_url = info["entries"][0]["url"]
+          video_title = info["entries"][0]["title"]
+          video_id = info["entries"][0]["id"]
+        else:
+          return None, None
+
+      with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.download([video_url])
+        return f"downloads/{video_id}.mp3", video_title
+    except:
+      return None, None
+
+
+  async def play_in_voice_chat(chat_id, query):
+    cursor.execute(
+        "SELECT session_string FROM assistants ORDER BY RANDOM() LIMIT 1"
+    )
+    ast = cursor.fetchone()
+    if not ast:
+      return None, "⚠️ تنبيه: لا توجد حسابات مساعدين مضافة في النظام!"
+
+    session_string = ast[0]
+    try:
+      client = Client(
+          f"session_{chat_id}",
+          api_id=API_ID,
+          api_hash=API_HASH,
+          session_string=session_string,
+          in_memory=True,
+      )
+      call_py = PyTgCalls(client)
+
+      ydl_opts = {"format": "bestaudio/best", "noplaylist": True, "quiet": True}
+      with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        search_q = query if query.startswith("http") else f"ytsearch:{query}"
+        info = ydl.extract_info(search_q, download=False)
+        if "entries" in info:
+          info = info["entries"][0]
+        url = info["url"]
+        title = info.get("title", "مقطع صوتي")
+
+      await client.start()
+      await call_py.start()
+      await call_py.play(chat_id, AudioPiped(url))
+      return title, None
+    except Exception as e:
+      return None, f"❌ خطأ أثناء التشغيل الصوتي: {e}"
+
+
+  @bot.message_handler(commands=["start"])
+  def start_bot(message):
+    keyboard = get_bot_keyboard()
+    caption = (
+        "🎵 **أهلاً بك في بوت الميوزك الخاص بك!**\n\n• للتحميل أرسل: `نزل"
+        " [اسم الأغنية]`\n• للتشغيل بالمكالمة أرسل: `شغل [اسم الأغنية]`"
+    )
+
+    cursor.execute(
+        "SELECT bot_type FROM created_bots WHERE bot_token = ?", (TOKEN,)
+    )
+    row = cursor.fetchone()
+    b_type = row[0] if row else "free"
+    image_path = "29038_2.jpg" if b_type == "vip" else "29038.jpg"
+
+    if os.path.exists(image_path):
+      with open(image_path, "rb") as photo:
+        bot.send_photo(
+            message.chat.id,
+            photo,
+            caption=caption,
+            reply_markup=keyboard,
+            parse_mode="Markdown",
+        )
+    else:
+      bot.reply_to(
+          message, caption, reply_markup=keyboard, parse_mode="Markdown"
+      )
+
+
+  @bot.message_handler(
+      func=lambda m: m.text
+      and (m.text.startswith("نزل ") or m.text.startswith("تنزيل "))
+  )
+  def download_song(message):
+    query = message.text.split(maxsplit=1)[1]
+    sent_msg = bot.reply_to(
+        message, f"🔍 جاري البحث والتحميل: `{query}`...", parse_mode="Markdown"
+    )
+
+    file_path, title = search_and_download_audio(query)
+    keyboard = get_bot_keyboard()
+
+    cursor.execute(
+        "SELECT bot_type FROM created_bots WHERE bot_token = ?", (TOKEN,)
+    )
+    row = cursor.fetchone()
+    b_type = row[0] if row else "free"
+    image_path = "29038_2.jpg" if b_type == "vip" else "29038.jpg"
+    caption_text = f"🎵 **تم التحميل بنجاح:** {title}"
+
+    if file_path and os.path.exists(file_path):
+      if os.path.exists(image_path):
+        with open(image_path, "rb") as photo:
+          bot.send_audio(
+              message.chat.id,
+              photo,
+              caption=caption_text,
+              parse_mode="Markdown",
+              reply_markup=keyboard,
+          )
       else:
-        text = f"📂 <b>{sec_title}</b>\n\nمكتبة psutil غير متوفرة."
-      markup.add(
-          types.InlineKeyboardButton("🔄 تحديث الفحص", callback_data="adm:sec:2")
-      )
-
-    elif sec_id == 7:
-      text = f"📂 <b>{sec_title}</b>\n\nاختر الإجراء المطلوب:"
-      markup.add(
-          types.InlineKeyboardButton(
-              "🔴 حظر مستخدم بالآيدي", callback_data="adm:action:ban"
-          ),
-          types.InlineKeyboardButton(
-              "🟢 إلغاء حظر مستخدم", callback_data="adm:action:unban"
-          ),
-      )
-
-    elif sec_id == 16:
-      text = f"📂 <b>{sec_title}</b>\n\nأرسل رسالة لتصل لجميع المستخدمين:"
-      markup.add(
-          types.InlineKeyboardButton(
-              "📢 بدء الإذاعة الشاملة", callback_data="adm:action:broadcast"
+        with open(file_path, "rb") as audio:
+          bot.send_audio(
+              message.chat.id,
+              audio,
+              caption=caption_text,
+              parse_mode="Markdown",
+              reply_markup=keyboard,
           )
-      )
 
-    elif sec_id == 29:
-      text = (
-          f"📂 <b>{sec_title}</b>\n\n⚠️ تفعيل وضع الطوارئ سيوقف استجابة البوت"
-          " للأعضاء المؤقتين."
-      )
-      markup.add(
-          types.InlineKeyboardButton(
-              "🛑 تفعيل/إيقاف وضع الطوارئ", callback_data="adm:action:emergency"
-          )
-      )
-
-    elif sec_id == 30:
-      text = (
-          f"📂 <b>{sec_title}</b>\n\n💾 احصل على نسخة من قاعدة بيانات البوت"
-          " الآن."
-      )
-      markup.add(
-          types.InlineKeyboardButton(
-              "📥 تحميل ملف القاعدة (Backup)", callback_data="adm:action:backup"
-          )
-      )
-
-    else:
-      text = (
-          f"📂 <b>{sec_title}</b>\n⚙️ هذا القسم مفعل. اضغط أدناه لتعديل إعداداته"
-          " أو تنفيذ مهامه:"
-      )
-      markup.add(
-          types.InlineKeyboardButton(
-              "✏️ تعديل إعدادات هذا القسم",
-              callback_data=f"adm:action:edit_{sec_id}",
-          )
-      )
-
-    markup.add(types.InlineKeyboardButton("🔙 رجوع للقائمة", callback_data="adm:back"))
-
-    try:
-      bot.edit_message_text(
-          chat_id=call.message.chat.id,
-          message_id=call.message.message_id,
-          text=text,
-          reply_markup=markup,
-      )
-    except Exception:
-      pass
-
-  elif data[1] == "action":
-    act = data[2]
-    if act == "ban":
-      bot.answer_callback_query(call.id)
-      msg = bot.send_message(
-          call.message.chat.id, "⛔️ أرسل آيدي (ID) المستخدم المراد حظره:"
-      )
-      bot.register_next_step_handler(msg, process_ban_user)
-    elif act == "unban":
-      bot.answer_callback_query(call.id)
-      msg = bot.send_message(
-          call.message.chat.id, "🟢 أرسل آيدي (ID) المستخدم لفك حظره:"
-      )
-      bot.register_next_step_handler(msg, process_unban_user)
-    elif act == "broadcast":
-      bot.answer_callback_query(call.id)
-      msg = bot.send_message(
-          call.message.chat.id, "📢 أرسل نص الإذاعة الآن:"
-      )
-      bot.register_next_step_handler(msg, process_global_broadcast)
-    elif act == "backup":
-      bot.answer_callback_query(call.id, "📁 جاري إرسال نسخة القاعدة...")
+      bot.delete_message(message.chat.id, sent_msg.message_id)
       try:
-        with open("mega_music_bot.db", "rb") as db_file:
-          bot.send_document(
-              call.message.chat.id,
-              db_file,
-              caption="💾 النسخة الاحتياطية لقاعدة البيانات",
-          )
-      except Exception:
-        bot.send_message(
-            call.message.chat.id, "❌ لم يتم العثور على ملف القاعدة بعد."
-        )
-    elif act.startswith("edit_"):
-      sec_num = act.split("_")[1]
-      bot.answer_callback_query(call.id)
-      msg = bot.send_message(
-          call.message.chat.id,
-          f"📝 أرسل القيمة الجديدة الخاصة بإعدادات القسم ({sec_num}):",
-      )
-      bot.register_next_step_handler(
-          msg, lambda m: process_save_section_setting(m, sec_num)
-      )
+        os.remove(file_path)
+      except:
+        pass
     else:
-      bot.answer_callback_query(
-          call.id, "✅ تم تنفيذ الإجراء بنجاح!", show_alert=True
+      bot.edit_message_text(
+          "❌ عذراً، لم يتم العثور على نتائج.",
+          message.chat.id,
+          sent_msg.message_id,
       )
 
-  elif data[1] == "back":
-    cmd_admin(call.message)
 
-
-# ==========================================
-# دوال معالجة الخطوات والمدخلات
-# ==========================================
-def process_ban_user(message):
-  try:
-    target_id = int(message.text.strip())
-    cursor.execute(
-        "UPDATE users SET is_banned = 1 WHERE user_id = ?", (target_id,)
-    )
-    conn.commit()
-    bot.reply_to(message, f"✅ تم حظر المستخدم ({target_id}) بنجاح.")
-  except ValueError:
-    bot.reply_to(message, "❌ الآيدي غير صالح.")
-
-
-def process_unban_user(message):
-  try:
-    target_id = int(message.text.strip())
-    cursor.execute(
-        "UPDATE users SET is_banned = 0 WHERE user_id = ?", (target_id,)
-    )
-    conn.commit()
-    bot.reply_to(message, f"✅ تم فك الحظر عن المستخدم ({target_id}) بنجاح.")
-  except ValueError:
-    bot.reply_to(message, "❌ الآيدي غير صالح.")
-
-
-def process_global_broadcast(message):
-  broadcast_text = message.text
-  cursor.execute("SELECT user_id FROM users WHERE is_banned = 0")
-  users = cursor.fetchall()
-
-  success, failed = 0, 0
-  status_msg = bot.reply_to(message, "📢 جاري بدء الإذاعة الشاملة...")
-
-  for user in users:
-    try:
-      bot.send_message(user[0], broadcast_text)
-      success += 1
-    except Exception:
-      failed += 1
-
-  bot.edit_message_text(
-      chat_id=message.chat.id,
-      message_id=status_msg.message_id,
-      text=(
-          "📊 <b>نتائج الإذاعة الشاملة:</b>\n\n✅ تم الإرسال بنجاح:"
-          f" <b>{success}</b>\n❌ فشل الإرسال (حظروا البوت):"
-          f" <b>{failed}</b>"
-      ),
+  @bot.message_handler(
+      func=lambda m: m.text
+      and (m.text.startswith("شغل ") or m.text.startswith("بحث "))
   )
+  def play_voice(message):
+    query = message.text.split(maxsplit=1)[1]
+    sent = bot.reply_to(
+        message,
+        "🎙️ **جاري استدعاء المساعد والانضمام للمكالمة الصوتية...**",
+        parse_mode="Markdown",
+    )
+
+    try:
+      loop = asyncio.new_event_loop()
+      asyncio.set_event_loop(loop)
+      title, error = loop.run_until_complete(
+          play_in_voice_chat(message.chat.id, query)
+      )
+      loop.close()
+
+      if error:
+        bot.edit_message_text(error, message.chat.id, sent.message_id)
+      else:
+        bot.edit_message_text(
+            f"🎶 **تم بدء التشغيل بنجاح!**\n• الأغنية: `{title}`",
+            message.chat.id,
+            sent.message_id,
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+      bot.edit_message_text(
+          f"❌ فشل التشغيل: {e}", message.chat.id, sent.message_id
+      )
 
 
-def process_save_section_setting(message, sec_num):
-  val = message.text.strip()
+  print("Music Bot Worker is running...")
+  bot.infinity_polling()
+
+else:
+  # ======== تشغيل بوت المصنع الرئيسي (Creator Bot) ========
+  CREATOR_BOT_TOKEN = os.environ.get("CREATOR_BOT_TOKEN", "YOUR_CREATOR_TOKEN")
+  DEV_ID = int(os.environ.get("DEV_ID", "123456789"))
+
+  bot = telebot.TeleBot(CREATOR_BOT_TOKEN)
+  active_bots = {}
+  user_states = {}
+
+  conn = sqlite3.connect("bot_maker.db", check_same_thread=False)
+  cursor = conn.cursor()
+
+  # إنشاء الجداول الأساسية
   cursor.execute(
-      "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
-      (f"sec_{sec_num}_config", val),
+      "CREATE TABLE IF NOT EXISTS admins (user_id INTEGER PRIMARY KEY)"
+  )
+  cursor.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY)")
+  cursor.execute("""
+        CREATE TABLE IF NOT EXISTS created_bots (
+            bot_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            bot_token TEXT,
+            bot_type TEXT,
+            rights TEXT DEFAULT 'with_rights'
+        )
+    """)
+  cursor.execute(
+      "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)"
+  )
+  cursor.execute("""
+        CREATE TABLE IF NOT EXISTS assistants (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_string TEXT
+        )
+    """)
+  conn.commit()
+
+  # القيم الافتراضية للإعدادات
+  cursor.execute(
+      "INSERT OR IGNORE INTO settings (key, value) VALUES ('free_mode',"
+      " 'true')"
+  )
+  cursor.execute(
+      "INSERT OR IGNORE INTO settings (key, value) VALUES ('vip_btn_text',"
+      " 'المطور')"
+  )
+  cursor.execute(
+      "INSERT OR IGNORE INTO settings (key, value) VALUES ('vip_btn_link',"
+      " 'https://t.me/YourUsername')"
+  )
+  cursor.execute(
+      "INSERT OR IGNORE INTO settings (key, value) VALUES ('creator_btn_text',"
+      " 'بوت المنشئ')"
+  )
+  cursor.execute(
+      "INSERT OR IGNORE INTO settings (key, value) VALUES ('creator_btn_link',"
+      " 'https://t.me/YourCreatorBot')"
+  )
+  cursor.execute(
+      "INSERT OR IGNORE INTO settings (key, value) VALUES ('nino_btn_text',"
+      " 'نينو')"
+  )
+  cursor.execute(
+      "INSERT OR IGNORE INTO settings (key, value) VALUES ('nino_btn_link',"
+      " 'https://t.me/YourChannel')"
+  )
+  cursor.execute(
+      "INSERT OR IGNORE INTO settings (key, value) VALUES ('sg_source_btn',"
+      " 'true')"
+  )
+  cursor.execute(
+      "INSERT OR IGNORE INTO settings (key, value) VALUES ('add_btn', 'true')"
+  )
+  cursor.execute(
+      "INSERT OR IGNORE INTO settings (key, value) VALUES ('x_btn', 'true')"
   )
   conn.commit()
-  bot.reply_to(
-      message,
-      f"✅ تم حفظ إعدادات القسم ({sec_num}) بنجاح:\n<code>{val}</code>",
+
+  # 🔄 إعادة تشغيل جميع البوتات الفرعية تلقائياً عند إقلاع السيرفر (Railway)
+  cursor.execute("SELECT bot_token FROM created_bots")
+  for row in cursor.fetchall():
+    b_token = row[0]
+    if b_token not in active_bots:
+      try:
+        p = subprocess.Popen(["python", __file__, b_token])
+        active_bots[b_token] = p
+      except Exception:
+        pass
+
+
+  def is_admin(user_id):
+    if user_id == DEV_ID:
+      return True
+    cursor.execute("SELECT user_id FROM admins WHERE user_id = ?", (user_id,))
+    return cursor.fetchone() is not None
+
+
+  def get_main_admin_keyboard():
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton("⚙️ الإعدادات المتقدمة", callback_data="adv_menu"),
+        InlineKeyboardButton("📊 الإحصائيات العامة", callback_data="stats_menu"),
+        InlineKeyboardButton("🎛️ نظام التشغيل", callback_data="control_menu"),
+        InlineKeyboardButton(
+            "📣 قسم النشر والإذاعة", callback_data="publish_menu"
+        ),
+        InlineKeyboardButton(
+            "🎨 تخصيص أزرار الحقوق", callback_data="rights_menu"
+        ),
+        InlineKeyboardButton(
+            "⭐ تخصيص زر اصنع VIP", callback_data="vip_btn_config"
+        ),
+        InlineKeyboardButton(
+            "💎 إدارة بوتات الـ VIP", callback_data="admin_vip_manager"
+        ),
+        InlineKeyboardButton(
+            "🤖 إدارة المساعدين", callback_data="assistants_menu"
+        ),
+    )
+    return keyboard
+
+
+  def get_member_main_keyboard():
+    keyboard = InlineKeyboardMarkup(row_width=1)
+    keyboard.add(
+        InlineKeyboardButton(
+            "🤖 اصنع بوتك مجاناً", callback_data="member_free_create"
+        ),
+        InlineKeyboardButton("💎 اصنع VIP", callback_data="member_vip"),
+    )
+    return keyboard
+
+
+  @bot.message_handler(commands=["start"])
+  def send_welcome(message):
+    user_id = message.from_user.id
+    cursor.execute(
+        "INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,)
+    )
+    conn.commit()
+
+    if is_admin(user_id):
+      bot.reply_to(
+          message,
+          "💎 **أهلاً بك يا مطور في لوحة التحكم الرئيسية:**",
+          reply_markup=get_main_admin_keyboard(),
+          parse_mode="Markdown",
+      )
+    else:
+      welcome_text = (
+          "مرحباً بك في نظام صنع بوتات الميوزك 🎵\n\n• للتحميل أرسل: `نزل [اسم"
+          " الأغنية]`\n• للتشغيل بالمكالمة أرسل: `شغل [اسم الأغنية]`\n\nاختر من"
+          " الأزرار أدناه:"
+      )
+      bot.reply_to(
+          message,
+          welcome_text,
+          reply_markup=get_member_main_keyboard(),
+          parse_mode="Markdown",
+      )
+
+
+  @bot.callback_query_handler(func=lambda call: True)
+  def callback_handler(call):
+    user_id = call.from_user.id
+    data = call.data
+
+    if data == "member_main":
+      bot.edit_message_text(
+          "مرحباً بك مجدداً في نظام صنع بوتات الميوزك 🎵\nاختر من الأزرار أدناه:",
+          call.message.chat.id,
+          call.message.message_id,
+          reply_markup=get_member_main_keyboard(),
+      )
+    elif data == "member_free_create":
+      cursor.execute(
+          "SELECT bot_token FROM created_bots WHERE user_id = ?", (user_id,)
+      )
+      existing_bot = cursor.fetchone()
+      keyboard = InlineKeyboardMarkup().add(
+          InlineKeyboardButton("🔙 رجوع", callback_data="member_main")
+      )
+      if existing_bot:
+        text = (
+            "🎉 **مبروك عزيزي بوتك صار جاهزاً!** 🎶\nأنت تمتلك بوت ميوزك بالفعل"
+            " قيد التشغيل."
+        )
+      else:
+        text = (
+            "🤖 **خطوات إنشاء بوت ميوزك مجاني:**\n\n1. اذهب إلى بوت صنع بوتات"
+            " الرسمي: @BotFather\n2. أنشئ بوت جديد واحصل على الـ"
+            " (Token).\n3. أرسل التوكن هنا بالشكل التالي:\n\n`/create [التوكن"
+            " الخاص بك]`"
+        )
+      bot.edit_message_text(
+          text,
+          call.message.chat.id,
+          call.message.message_id,
+          reply_markup=keyboard,
+          parse_mode="Markdown",
+      )
+
+    elif data == "member_vip":
+      cursor.execute("SELECT value FROM settings WHERE key = 'vip_btn_text'")
+      t_res = cursor.fetchone()
+      cursor.execute("SELECT value FROM settings WHERE key = 'vip_btn_link'")
+      l_res = cursor.fetchone()
+      btn_text = t_res[0] if t_res else "المطور"
+      btn_link = l_res[0] if l_res else "https://t.me/YourUsername"
+
+      keyboard = InlineKeyboardMarkup(row_width=1).add(
+          InlineKeyboardButton(f"👤 {btn_text}", url=btn_link),
+          InlineKeyboardButton("🔙 رجوع", callback_data="member_main"),
+      )
+      bot.edit_message_text(
+          "💎 **خدمة بوتات الـ VIP المدفوعة:**\n\nاحصل على بوت ميوزك بمميزات إضافية"
+          " وبدون حقوق.\nللاشتراك أو الاستفسار تواصل عبر الزر أدناه:",
+          call.message.chat.id,
+          call.message.message_id,
+          reply_markup=keyboard,
+          parse_mode="Markdown",
+      )
+
+    if not is_admin(user_id):
+      return
+
+    if data == "main_admin":
+      bot.edit_message_text(
+          "💎 **لوحة تحكم المطور الرئيسية:**",
+          call.message.chat.id,
+          call.message.message_id,
+          reply_markup=get_main_admin_keyboard(),
+          parse_mode="Markdown",
+      )
+
+    elif data == "adv_menu":
+      keyboard = InlineKeyboardMarkup(row_width=2)
+      keyboard.add(
+          InlineKeyboardButton("➕ إضافة مشرف", callback_data="add_admin_prompt"),
+          InlineKeyboardButton("➖ إزالة مشرف", callback_data="remove_admin_prompt"),
+          InlineKeyboardButton("📋 قائمة المشرفين", callback_data="list_admins"),
+          InlineKeyboardButton("🔙 رجوع", callback_data="main_admin"),
+      )
+      bot.edit_message_text(
+          "⚙️ **قسم إدارة المشرفين:**",
+          call.message.chat.id,
+          call.message.message_id,
+          reply_markup=keyboard,
+          parse_mode="Markdown",
+      )
+
+    elif data == "add_admin_prompt":
+      user_states[user_id] = "waiting_add_admin"
+      bot.answer_callback_query(call.id)
+      bot.send_message(
+          call.message.chat.id,
+          "👤 أرسل آيدي (ID) المشرف الجديد:",
+          parse_mode="Markdown",
+      )
+
+    elif data == "remove_admin_prompt":
+      user_states[user_id] = "waiting_remove_admin"
+      bot.answer_callback_query(call.id)
+      bot.send_message(
+          call.message.chat.id,
+          "🗑️ أرسل آيدي (ID) المشرف المراد إزالته:",
+          parse_mode="Markdown",
+      )
+
+    elif data == "list_admins":
+      cursor.execute("SELECT user_id FROM admins")
+      admins = cursor.fetchall()
+      text = f"👑 **المطور الأساسي:** `{DEV_ID}`\n\n📋 **المشرفون:**\n"
+      for adm in admins:
+        text += f"• `{adm[0]}`\n"
+      keyboard = InlineKeyboardMarkup().add(
+          InlineKeyboardButton("🔙 رجوع", callback_data="adv_menu")
+      )
+      bot.edit_message_text(
+          text,
+          call.message.chat.id,
+          call.message.message_id,
+          reply_markup=keyboard,
+          parse_mode="Markdown",
+      )
+
+    elif data == "stats_menu":
+      cursor.execute("SELECT COUNT(*) FROM users")
+      u_cnt = cursor.fetchone()[0]
+      cursor.execute("SELECT COUNT(*) FROM created_bots")
+      b_cnt = cursor.fetchone()[0]
+      bot.edit_message_text(
+          f"📊 **الإحصائيات العامة:**\n• إجمالي الأعضاء: `{u_cnt}`\n• البوتات"
+          f" المنشأة: `{b_cnt}`",
+          call.message.chat.id,
+          call.message.message_id,
+          reply_markup=InlineKeyboardMarkup().add(
+              InlineKeyboardButton("🔙 رجوع", callback_data="main_admin")
+          ),
+          parse_mode="Markdown",
+      )
+
+    elif data == "control_menu":
+      cursor.execute("SELECT value FROM settings WHERE key = 'free_mode'")
+      res = cursor.fetchone()
+      status = "مفعل ✅" if res and res[0] == "true" else "معطل ❌"
+      keyboard = InlineKeyboardMarkup(row_width=1)
+      keyboard.add(
+          InlineKeyboardButton("🔴 تعطيل الوضع المجاني", callback_data="set_free_off"),
+          InlineKeyboardButton("🟢 تفعيل الوضع المجاني", callback_data="set_free_on"),
+          InlineKeyboardButton("🔙 رجوع", callback_data="main_admin"),
+      )
+      bot.edit_message_text(
+          f"🎛️ **الوضع المجاني:** {status}",
+          call.message.chat.id,
+          call.message.message_id,
+          reply_markup=keyboard,
+          parse_mode="Markdown",
+      )
+
+    elif data == "set_free_off":
+      cursor.execute(
+          "INSERT OR REPLACE INTO settings (key, value) VALUES ('free_mode',"
+          " 'false')"
+      )
+      conn.commit()
+      bot.answer_callback_query(call.id, "⚠️ تم تعطيل الوضع المجاني.", show_alert=True)
+
+    elif data == "set_free_on":
+      cursor.execute(
+          "INSERT OR REPLACE INTO settings (key, value) VALUES ('free_mode',"
+          " 'true')"
+      )
+      conn.commit()
+      bot.answer_callback_query(call.id, "✅ تم تفعيل الوضع المجاني.", show_alert=True)
+
+    elif data == "publish_menu":
+      keyboard = InlineKeyboardMarkup(row_width=1)
+      keyboard.add(
+          InlineKeyboardButton(
+              "📤 إذاعة رسالة شاملة", callback_data="pub_broadcast"
+          ),
+          InlineKeyboardButton(
+              "🔄 توجيه رسالة (Forward)", callback_data="pub_forward"
+          ),
+          InlineKeyboardButton("🔙 رجوع", callback_data="main_admin"),
+      )
+      bot.edit_message_text(
+          "📣 **قسم النشر والإذاعة:**",
+          call.message.chat.id,
+          call.message.message_id,
+          reply_markup=keyboard,
+          parse_mode="Markdown",
+      )
+
+    elif data == "pub_broadcast":
+      user_states[user_id] = "waiting_broadcast_msg"
+      bot.answer_callback_query(call.id)
+      bot.send_message(
+          call.message.chat.id,
+          "📤 أرسل الرسالة المراد إذاعتها لكل الأعضاء:",
+          parse_mode="Markdown",
+      )
+
+    elif data == "pub_forward":
+      user_states[user_id] = "waiting_forward_msg"
+      bot.answer_callback_query(call.id)
+      bot.send_message(
+          call.message.chat.id,
+          "🔄 أرسل الرسالة المراد توجيهها للكل:",
+          parse_mode="Markdown",
+      )
+
+    elif data == "rights_menu":
+      cursor.execute("SELECT value FROM settings WHERE key = 'sg_source_btn'")
+      sg = cursor.fetchone()[0] == "true"
+      cursor.execute("SELECT value FROM settings WHERE key = 'add_btn'")
+      add = cursor.fetchone()[0] == "true"
+      cursor.execute("SELECT value FROM settings WHERE key = 'x_btn'")
+      x = cursor.fetchone()[0] == "true"
+
+      keyboard = InlineKeyboardMarkup(row_width=2)
+      keyboard.add(
+          InlineKeyboardButton(
+              f"زر SG SOURCE: {'مفعل ✅' if sg else 'معطل ❌'}",
+              callback_data="toggle_sg",
+          ),
+          InlineKeyboardButton(
+              f"زر ADD: {'مفعل ✅' if add else 'معطل ❌'}",
+              callback_data="toggle_add",
+          ),
+          InlineKeyboardButton(
+              f"زر X: {'مفعل ✅' if x else 'معطل ❌'}", callback_data="toggle_x"
+          ),
+          InlineKeyboardButton(
+              "✏️ تعديل زر 'نينو'", callback_data="set_nino_config"
+          ),
+          InlineKeyboardButton(
+              "✏️ تعديل زر 'بوت المنشئ'", callback_data="set_creator_btn"
+          ),
+          InlineKeyboardButton("🔙 رجوع", callback_data="main_admin"),
+      )
+      bot.edit_message_text(
+          "🎨 **تخصيص أزرار الحقوق والمصدر:**",
+          call.message.chat.id,
+          call.message.message_id,
+          reply_markup=keyboard,
+          parse_mode="Markdown",
+      )
+
+    elif data in ["toggle_sg", "toggle_add", "toggle_x"]:
+      key_map = {
+          "toggle_sg": "sg_source_btn",
+          "toggle_add": "add_btn",
+          "toggle_x": "x_btn",
+      }
+      db_key = key_map[data]
+      cursor.execute("SELECT value FROM settings WHERE key = ?", (db_key,))
+      current = cursor.fetchone()[0] == "true"
+      new_val = "false" if current else "true"
+      cursor.execute(
+          "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+          (db_key, new_val),
+      )
+      conn.commit()
+      bot.answer_callback_query(call.id, "✅ تم تغيير حالة الزر بنجاح.")
+
+    elif data == "set_nino_config":
+      user_states[user_id] = "waiting_nino_text"
+      bot.answer_callback_query(call.id)
+      bot.send_message(
+          call.message.chat.id,
+          "✏️ أرسل اسم الزر ورابطه بالشكل الآتي:\n`الاسم | الرابط`",
+          parse_mode="Markdown",
+      )
+
+    elif data == "set_creator_btn":
+      user_states[user_id] = "waiting_creator_btn"
+      bot.answer_callback_query(call.id)
+      bot.send_message(
+          call.message.chat.id,
+          "✏️ أرسل اسم ورابط زر بوت المنشئ بالشكل الآتي:\n`الاسم | الرابط`",
+          parse_mode="Markdown",
+      )
+
+    elif data == "vip_btn_config":
+      user_states[user_id] = "waiting_vip_text"
+      bot.answer_callback_query(call.id)
+      bot.send_message(
+          call.message.chat.id,
+          "✏️ أرسل اسم الزر الجديد لـ VIP (مثال: معرفك):",
+          parse_mode="Markdown",
+      )
+
+    elif data == "admin_vip_manager":
+      keyboard = InlineKeyboardMarkup(row_width=1)
+      keyboard.add(
+          InlineKeyboardButton(
+              "👑 إنشاء بوت VIP خالي من الحقوق تماماً",
+              callback_data="create_norights_bot",
+          ),
+          InlineKeyboardButton("🔙 رجوع", callback_data="main_admin"),
+      )
+      bot.edit_message_text(
+          "💎 **إدارة بوتات الـ VIP:**",
+          call.message.chat.id,
+          call.message.message_id,
+          reply_markup=keyboard,
+          parse_mode="Markdown",
+      )
+
+    elif data == "create_norights_bot":
+      user_states[user_id] = "waiting_norights_token"
+      bot.answer_callback_query(call.id)
+      bot.send_message(
+          call.message.chat.id,
+          "👑 أرسل توكن البوت الجديد (من @BotFather) لبيئة العمل ليتم تشغيله"
+          " خالي من الحقوق:",
+          parse_mode="Markdown",
+      )
+
+    elif data == "assistants_menu":
+      cursor.execute("SELECT id FROM assistants")
+      asts = cursor.fetchall()
+      keyboard = InlineKeyboardMarkup(row_width=1)
+      for ast in asts:
+        keyboard.add(
+            InlineKeyboardButton(
+                f"🗑️ حذف المساعد #{ast[0]}",
+                callback_data=f"del_ast_{ast[0]}",
+            )
+        )
+      keyboard.add(
+          InlineKeyboardButton("➕ إضافة مساعد جديد", callback_data="add_assistant_prompt")
+      )
+      keyboard.add(InlineKeyboardButton("🔙 رجوع", callback_data="main_admin"))
+      bot.edit_message_text(
+          f"🤖 **إدارة الحسابات المساعدة:**\nالمساعدون المفعلون:"
+          f" `{len(asts)}`",
+          call.message.chat.id,
+          call.message.message_id,
+          reply_markup=keyboard,
+          parse_mode="Markdown",
+      )
+
+    elif data == "add_assistant_prompt":
+      user_states[user_id] = "waiting_add_assistant"
+      bot.answer_callback_query(call.id)
+      bot.send_message(
+          call.message.chat.id,
+          "🤖 أرسل جلسة الحساب (Session String):",
+          parse_mode="Markdown",
+      )
+
+    elif data.startswith("del_ast_"):
+      ast_id = data.split("_")[2]
+      cursor.execute("DELETE FROM assistants WHERE id = ?", (ast_id,))
+      conn.commit()
+      bot.answer_callback_query(call.id, "✅ تم حذف المساعد بنجاح.")
+      # تحديث القائمة فوراً
+      cursor.execute("SELECT id FROM assistants")
+      asts = cursor.fetchall()
+      keyboard = InlineKeyboardMarkup(row_width=1)
+      for ast in asts:
+        keyboard.add(
+            InlineKeyboardButton(
+                f"🗑️ حذف المساعد #{ast[0]}",
+                callback_data=f"del_ast_{ast[0]}",
+            )
+        )
+      keyboard.add(
+          InlineKeyboardButton("➕ إضافة مساعد جديد", callback_data="add_assistant_prompt")
+      )
+      keyboard.add(InlineKeyboardButton("🔙 رجوع", callback_data="main_admin"))
+      bot.edit_message_text(
+          "🤖 **إدارة الحسابات المساعدة:**",
+          call.message.chat.id,
+          call.message.message_id,
+          reply_markup=keyboard,
+      )
+
+
+  @bot.message_handler(
+      content_types=[
+          "text",
+          "photo",
+          "video",
+          "document",
+          "audio",
+          "voice",
+          "sticker",
+          "animation",
+      ],
+      func=lambda message: message.from_user.id in user_states,
   )
+  def handle_states(message):
+    user_id = message.from_user.id
+    state = user_states.get(user_id)
+    text = message.text.strip() if message.text else ""
+    user_states.pop(user_id, None)
+
+    # معالجة تعديل زر الـ VIP
+    if state == "waiting_vip_text" and is_admin(user_id):
+      cursor.execute(
+          "INSERT OR REPLACE INTO settings (key, value) VALUES ('vip_btn_text',"
+          " ?)",
+          (text,),
+      )
+      conn.commit()
+      user_states[user_id] = "waiting_vip_link"
+      bot.reply_to(
+          message,
+          "🔗 أرسل الرابط أو اليوزر الجديد للزر (مثال:"
+          " `https://t.me/Username`):",
+          parse_mode="Markdown",
+      )
+      return
+
+    elif state == "waiting_vip_link" and is_admin(user_id):
+      cursor.execute(
+          "INSERT OR REPLACE INTO settings (key, value) VALUES ('vip_btn_link',"
+          " ?)",
+          (text,),
+      )
+      conn.commit()
+      bot.reply_to(message, "✅ **تم تحديث زر اصنع VIP بنجاح!**", parse_mode="Markdown")
+      return
+
+    # معالجة تعديل زر نينو
+    elif state == "waiting_nino_text" and is_admin(user_id):
+      try:
+        name, link = text.split("|")
+        cursor.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('nino_btn_text',"
+            " ?)",
+            (name.strip(),),
+        )
+        cursor.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('nino_btn_link',"
+            " ?)",
+            (link.strip(),),
+        )
+        conn.commit()
+        bot.reply_to(message, "✅ تم تحديث زر 'نينو' ورابطه بنجاح.")
+      except:
+        bot.reply_to(message, "❌ خطأ بالصيغة. استخدم: الاسم | الرابط")
+      return
+
+    # معالجة تعديل بوت المنشئ
+    elif state == "waiting_creator_btn" and is_admin(user_id):
+      try:
+        name, link = text.split("|")
+        cursor.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES"
+            " ('creator_btn_text', ?)",
+            (name.strip(),),
+        )
+        cursor.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES"
+            " ('creator_btn_link', ?)",
+            (link.strip(),),
+        )
+        conn.commit()
+        bot.reply_to(message, "✅ تم تحديث زر 'بوت المنشئ' ورابطه بنجاح.")
+      except:
+        bot.reply_to(message, "❌ خطأ بالصيغة. استخدم: الاسم | الرابط")
+      return
+
+    # إنشاء بوت VIP خالي من الحقوق للمشرف
+    elif state == "waiting_norights_token" and is_admin(user_id):
+      try:
+        process = subprocess.Popen(["python", __file__, text])
+        active_bots[text] = process
+        cursor.execute(
+            "INSERT INTO created_bots (user_id, bot_token, bot_type, rights)"
+            " VALUES (?, ?, ?, ?)",
+            (user_id, text, "vip", "no_rights"),
+        )
+        conn.commit()
+        bot.reply_to(
+            message,
+            "👑 **تم إنشاء وتشغيل بوت الـ VIP الخالي من الحقوق تماماً بنجاح!**",
+            parse_mode="Markdown",
+        )
+      except Exception as e:
+        bot.reply_to(message, f"❌ حدث خطأ: {e}")
+      return
+
+    if not is_admin(user_id):
+      return
+
+    if state == "waiting_broadcast_msg":
+      cursor.execute("SELECT user_id FROM users")
+      sent, failed = 0, 0
+      status_msg = bot.reply_to(message, "⏳ جاري الإذاعة...")
+      for u in cursor.fetchall():
+        try:
+          bot.copy_message(
+              chat_id=u[0],
+              from_chat_id=message.chat.id,
+              message_id=message.message_id,
+          )
+          sent += 1
+        except:
+          failed += 1
+      bot.edit_message_text(
+          f"✅ **تمت الإذاعة:**\n• نجاح: `{sent}`\n• فشل: `{failed}`",
+          status_msg.chat.id,
+          status_msg.message_id,
+          parse_mode="Markdown",
+      )
+
+    elif state == "waiting_forward_msg":
+      cursor.execute("SELECT user_id FROM users")
+      sent, failed = 0, 0
+      status_msg = bot.reply_to(message, "⏳ جاري التوجيه...")
+      for u in cursor.fetchall():
+        try:
+          bot.forward_message(
+              chat_id=u[0],
+              from_chat_id=message.chat.id,
+              message_id=message.message_id,
+          )
+          sent += 1
+        except:
+          failed += 1
+      bot.edit_message_text(
+          f"✅ **تم التوجيه:**\n• نجاح: `{sent}`\n• فشل: `{failed}`",
+          status_msg.chat.id,
+          status_msg.message_id,
+          parse_mode="Markdown",
+      )
+
+    elif state == "waiting_add_admin":
+      try:
+        new_id = int(text)
+        cursor.execute("INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (new_id,))
+        conn.commit()
+        bot.reply_to(message, f"✅ تم إضافة المشرف `{new_id}` بنجاح.")
+      except:
+        bot.reply_to(message, "❌ أرسل الآيدي أرقاماً صحيحة.")
+
+    elif state == "waiting_remove_admin":
+      try:
+        rem_id = int(text)
+        cursor.execute("DELETE FROM admins WHERE user_id = ?", (rem_id,))
+        conn.commit()
+        bot.reply_to(message, f"🗑️ تم إزالة المشرف `{rem_id}`.")
+      except:
+        bot.reply_to(message, "❌ أرسل الآيدي أرقاماً صحيحة.")
+
+    elif state == "waiting_add_assistant":
+      cursor.execute(
+          "INSERT INTO assistants (session_string) VALUES (?)", (text,)
+      )
+      conn.commit()
+      bot.reply_to(message, "✅ تم حفظ وإضافة جلسة المساعد بنجاح.")
 
 
-if __name__ == "__main__":
-  print("Complete Mega Bot with 30 Sections & Player is running...")
+  @bot.message_handler(commands=["create"])
+  def create_music_bot(message):
+    try:
+      parts = message.text.split(maxsplit=1)
+      if len(parts) < 2:
+        bot.reply_to(
+            message,
+            "⚠️ أرسل التوكن هكذا:\n`/create [Token]`",
+            parse_mode="Markdown",
+        )
+        return
+
+      token = parts[1].strip()
+      user_id = message.from_user.id
+
+      if token in active_bots:
+        bot.reply_to(message, "⚠️ هذا البوت يعمل بالفعل!")
+        return
+
+      process = subprocess.Popen(["python", __file__, token])
+      active_bots[token] = process
+
+      bot_rights = "no_rights" if is_admin(user_id) else "with_rights"
+      cursor.execute(
+          "INSERT INTO created_bots (user_id, bot_token, bot_type, rights)"
+          " VALUES (?, ?, ?, ?)",
+          (user_id, token, "free", bot_rights),
+      )
+      conn.commit()
+
+      bot.reply_to(
+          message,
+          "✅ **تم إنشاء وتشغيل بوت الميوزك المجاني بنجاح!** 🎶",
+          parse_mode="Markdown",
+      )
+    except Exception as e:
+      bot.reply_to(message, f"❌ حدث خطأ: {e}")
+
+
+  print("Main Creator Bot is running completely with all features...")
   bot.infinity_polling()
 
