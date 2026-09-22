@@ -1,9 +1,5 @@
-[phases.setup]
-nixPkgs = ["python311", "ffmpeg"]
-
-[phases.build]
-cmds = ["pip install -r requirements.txt"]
-
-[phases.start]
-cmd = "python bot.py"
-
+pyrogram
+py-tgcalls
+yt-dlp
+tgcrypto
+pytelegrambotapi
