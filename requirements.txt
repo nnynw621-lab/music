@@ -1,2 +1,7 @@
+pyrogram==2.0.106
+tgcrypto==1.2.5
+motor==3.3.2
+aiohttp==3.9.3
+requests==2.31.0
 pyTelegramBotAPI==4.22.0
 psutil==7.0.0
