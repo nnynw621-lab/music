@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 from pyrogram import Client, filters, idle
+from pyrogram.errors import SessionPasswordNeeded
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from pytgcalls import PyTgCalls
 from pytgcalls.types import AudioPiped
@@ -15,7 +16,8 @@ DATA_FILE = "bot_data.json"
 
 app = Client("music_bot_main", api_id=API_ID, api_hash=API_HASH)
 call_py = None
-user_states = {}  # لتتبع حالات إدخال بيانات المطور (إضافة مشرف، اشتراك إجباري، إلخ)
+user_states = {}  # لتتبع حالات إدخال البيانات
+temp_logins = {}  # لتخزين بيانات تسجيل الدخول المؤقتة للمساعدين (رقم الهاتف، الكود، العميل المؤقت)
 
 
 # --- نظام قاعدة البيانات المحلية ---
@@ -106,7 +108,7 @@ def broadcast_template_keyboard():
 # لوحة إدارة المساعدين المستقلة
 def assistants_keyboard():
   return InlineKeyboardMarkup([
-      [InlineKeyboardButton("➕ إضافة مساعد جديد (جلسة)", callback_data="add_assistant")],
+      [InlineKeyboardButton("➕ إضافة مساعد جديد (تفاعلي)", callback_data="add_assistant_interactive")],
       [InlineKeyboardButton("📋 عرض المساعدين المضافين", callback_data="list_assistants")],
       [InlineKeyboardButton("🔙 عودة للوحة الرئيسية", callback_data="main_menu")],
   ])
@@ -132,7 +134,7 @@ async def check_forced_subscriptions(client, user_id):
   data = load_data()
   subs = data.get("forced_subs", [])
   if not subs or is_admin_or_dev(user_id):
-    return True  # إذا لم تكن هناك قنوات اشتراك إجباري أو كان المستخدم مشرفاً/مطوراً
+    return True
 
   not_subscribed_channels = []
   for sub in subs:
@@ -144,11 +146,9 @@ async def check_forced_subscriptions(client, user_id):
       if member.status in ["left", "banned"]:
         not_subscribed_channels.append(InlineKeyboardButton(f"🔔 اشترك في {title}", url=invite_link))
     except Exception:
-      # إذا تعذر التحقق (مثلاً البوت ليس مشرفاً أو خطأ في المعرف)، نعتبره متطلباً ويتيح الرابط
       not_subscribed_channels.append(InlineKeyboardButton(f"🔔 اشترك في {title}", url=invite_link))
 
   if not_subscribed_channels:
-    # إنشاء زر التحقق مرة أخرى
     not_subscribed_channels.append([InlineKeyboardButton("✅ لقد اشتركت، حاول مرة أخرى", callback_data="check_sub")])
     return not_subscribed_channels
   return True
@@ -166,7 +166,6 @@ async def start_command(client, message):
     data["users"].append(user_id)
     save_data(data)
 
-  # فحص الاشتراك الإجباري أولاً
   sub_check = await check_forced_subscriptions(client, user_id)
   if sub_check is not True:
     await message.reply(
@@ -230,7 +229,6 @@ async def panel_callback_handler(client, callback_query):
   if data_cb == "main_menu":
     await callback_query.message.edit_text("🎛️ **لوحة التحكم الرئيسية للإدارة:**", reply_markup=main_admin_keyboard())
 
-  # 1. القسم المتقدم
   elif data_cb == "adv_menu":
     await callback_query.message.edit_text(
         "⚙️ **القسم المتقدم (إدارة المشرفين):**\nاختر العملية المطلوبة:",
@@ -263,7 +261,6 @@ async def panel_callback_handler(client, callback_query):
       text += "لا يوجد مشرفين مضافين حالياً."
     await callback_query.message.edit_text(text, reply_markup=advanced_keyboard())
 
-  # 2. لوحة الإحصائيات العامة
   elif data_cb == "stats_menu":
     await callback_query.message.edit_text(
         "📊 **لوحة الإحصائيات العامة:**\nاختر القسم المطلوب لعرضه:",
@@ -295,7 +292,6 @@ async def panel_callback_handler(client, callback_query):
     )
     await callback_query.message.edit_text(text, reply_markup=stats_keyboard())
 
-  # 4. إدارة الاشتراكات الإجبارية
   elif data_cb == "sub_menu":
     await callback_query.message.edit_text(
         "📢 **إدارة الاشتراكات الإجبارية:**\nاختر نوع الاشتراك المراد إضافته:",
@@ -327,7 +323,6 @@ async def panel_callback_handler(client, callback_query):
     )
     user_states[user_id] = "waiting_sub_private"
 
-  # أقسام الكليشة والمساعدين
   elif data_cb == "broadcast_menu":
     await callback_query.message.edit_text(
         "🎨 **قسم التحكم بكليشة النشر والأزرار:**\nاختر العنصر الذي تريد تعديله:",
@@ -340,12 +335,13 @@ async def panel_callback_handler(client, callback_query):
         reply_markup=assistants_keyboard(),
     )
 
-  elif data_cb == "add_assistant":
+  elif data_cb == "add_assistant_interactive":
     await callback_query.message.edit_text(
-        "💡 **إضافة مساعد جديد:**\nأرسل الآن كود جلسة بايروجرام (String Session) الخاصة بالحساب المساعد:",
+        "📱 **إضافة حساب مساعد جديد:**\n\n"
+        "يرجى إرسال **رقم الهاتف** الخاص بالحساب المراد إضافته مع رمز الدولة (مثال: `+9647700000000`):",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="assistants_menu")]]),
     )
-    user_states[user_id] = "waiting_assistant_session"
+    user_states[user_id] = "waiting_assistant_phone"
 
   elif data_cb == "list_assistants":
     data = load_data()
@@ -374,7 +370,7 @@ async def panel_callback_handler(client, callback_query):
 
 
 # ==========================================
-# معالجة تفاعلات النصوص المكتوبة للمطورين
+# معالجة تفاعلات النصوص والمساعدين التفاعليين
 # ==========================================
 @app.on_message(filters.text & ~filters.command(["start"]))
 async def handle_admin_text_inputs(client, message):
@@ -385,7 +381,92 @@ async def handle_admin_text_inputs(client, message):
   state = user_states[user_id]
   data = load_data()
 
-  if state == "waiting_add_admin":
+  # نظام تسجيل المساعد التفاعلي خطوة بخطوة
+  if state == "waiting_assistant_phone":
+    phone_number = message.text.strip()
+    msg_wait = await message.reply("⏳ جاري إرسال كود التحقق إلى حسابك على تليجرام...")
+    try:
+      temp_client = Client(f"temp_ast_{user_id}", api_id=API_ID, api_hash=API_HASH, in_memory=True)
+      await temp_client.connect()
+      sent_code = await temp_client.send_code(phone_number)
+
+      temp_logins[user_id] = {
+          "client": temp_client,
+          "phone": phone_number,
+          "phone_code_hash": sent_code.phone_code_hash,
+      }
+      user_states[user_id] = "waiting_assistant_code"
+      await msg_wait.edit_text(
+          "✅ **تم إرسال كود التحقق بنجاح إلى رسائل تليجرام الرسمية.**\n\n"
+          "يرجى إرسال كود التحقق الآن (ملاحظة: يمكنك وضع مسافات بين الأرقام أو كتابته مباشرة):"
+      )
+    except Exception as e:
+      await msg_wait.edit_text(f"❌ حدث خطأ أثناء إرسال الكود:\n`{e}`\n\nأرسل /start للعودة.")
+      del user_states[user_id]
+
+  elif state == "waiting_assistant_code":
+    code = message.text.strip().replace(" ", "")
+    login_info = temp_logins.get(user_id)
+    if not login_info:
+      await message.reply("⚠️ انتهت صلاحية الجلسة المؤقتة. يرجى بدء العملية من جديد.")
+      del user_states[user_id]
+      return
+
+    temp_client = login_info["client"]
+    phone = login_info["phone"]
+    phone_code_hash = login_info["phone_code_hash"]
+
+    msg_wait = await message.reply("⏳ جاري التحقق من الكود وتسجيل الدخول...")
+    try:
+      await temp_client.sign_in(phone, phone_code_hash, code)
+      session_string = await temp_client.export_session_string()
+      data["assistants"].append(session_string)
+      save_data(data)
+
+      await temp_client.disconnect()
+      del user_states[user_id]
+      del temp_logins[user_id]
+
+      await msg_wait.edit_text(
+          "🎉 **تم تسجيل حساب المساعد بنجاح وحفظ الجلسة في البوت!**", reply_markup=main_admin_keyboard()
+      )
+    except SessionPasswordNeeded:
+      user_states[user_id] = "waiting_assistant_password"
+      await msg_wait.edit_text(
+          "🔒 **هذا الحساب محمي بكلمة مرور (التحقق بخطوتين - 2FA).**\n\n"
+          "يرجى إرسال كلمة المرور الخاصة بحسابك الآن:"
+      )
+    except Exception as e:
+      await msg_wait.edit_text(f"❌ الكود غير صحيح أو حدث خطأ:\n`{e}`")
+
+  elif state == "waiting_assistant_password":
+    password = message.text.strip()
+    login_info = temp_logins.get(user_id)
+    if not login_info:
+      await message.reply("⚠️ انتهت صلاحية الجلسة المؤقتة.")
+      del user_states[user_id]
+      return
+
+    temp_client = login_info["client"]
+    msg_wait = await message.reply("⏳ جاري التحقق من كلمة المرور...")
+    try:
+      await temp_client.check_password(password)
+      session_string = await temp_client.export_session_string()
+      data["assistants"].append(session_string)
+      save_data(data)
+
+      await temp_client.disconnect()
+      del user_states[user_id]
+      del temp_logins[user_id]
+
+      await msg_wait.edit_text(
+          "🎉 **تم التحقق بنجاح وإضافة حساب المساعد إلى البوت!**", reply_markup=main_admin_keyboard()
+      )
+    except Exception as e:
+      await msg_wait.edit_text(f"❌ كلمة المرور غير صحيحة أو حدث خطأ:\n`{e}`")
+
+  # الحالات الأخرى للمشرفين والكليشة
+  elif state == "waiting_add_admin":
     try:
       new_adm = int(message.text.strip())
       if new_adm not in data["admins"]:
@@ -451,13 +532,6 @@ async def handle_admin_text_inputs(client, message):
     except Exception:
       await message.reply("⚠️ خطأ في الصيغة. يرجى الإرسال هكذا: `النص | الرابط`")
 
-  elif state == "waiting_assistant_session":
-    session_str = message.text.strip()
-    data["assistants"].append(session_str)
-    save_data(data)
-    del user_states[user_id]
-    await message.reply("✅ تمت إضافة جلسة المساعد بنجاح!", reply_markup=main_admin_keyboard())
-
 
 # ==========================================
 # أوامر التشغيل عبر الاتصال والبحث والتنزيل
@@ -465,7 +539,6 @@ async def handle_admin_text_inputs(client, message):
 @app.on_message(filters.command(["تشغيل", "شغل", "بحث", "play"], prefixes=["/", "!", ""]) & filters.group)
 async def play_music_handler(client, message):
   user_id = message.from_user.id
-  # فحص الاشتراك الإجباري قبل تنفيذ التشغيل
   sub_check = await check_forced_subscriptions(client, user_id)
   if sub_check is not True:
     await message.reply("⚠️ عليك الاشتراك في قنوات البوت الإجبارية أولاً لاستخدام أوامر التشغيل!", reply_markup=InlineKeyboardMarkup(sub_check))
@@ -488,7 +561,6 @@ async def play_music_handler(client, message):
         "default_search": "ytsearch1",
         "extractor_args": {"youtube": {"player_client": ["android"]}},
         "quiet": True,
-        # 'cookiefile': 'cookies.txt', # تم دعم ملف الكوكيز مسبقاً
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -544,7 +616,6 @@ async def play_music_handler(client, message):
     await msg.edit_text(f"❌ حدث خطأ أثناء التشغيل:\n`{e}`")
 
 
-# أوامر التنزيل (إرسال الأغنية عبر الشات مباشرة)
 @app.on_message(filters.command(["تنزيل", "نزل", "download"], prefixes=["/", "!", ""]))
 async def download_audio_handler(client, message):
   user_id = message.from_user.id
@@ -600,7 +671,7 @@ async def download_audio_handler(client, message):
 
 async def main():
   await app.start()
-  print("🚀 البوت واللوحة الملونة ونظام الاشتراكات الإجبارية جاهزة وتعمل بكفاءة تامة!")
+  print("🚀 البوت واللوحة التفاعلية لتسجيل المساعدين تعمل بكفاءة تامة!")
   await idle()
   await app.stop()
 
