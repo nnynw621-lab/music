@@ -1,7 +1,0 @@
-# Local bot runtime data
-.env
-assistant_session.txt
-bot_data.json
-cookies.txt
-*.session
-*.session-journal
