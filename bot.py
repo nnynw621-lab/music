@@ -5,7 +5,7 @@ import telebot
 from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
 from pyrogram import Client
 from pytgcalls import PyTgCalls
-from pytgcalls.types import AudioPiped
+from pytgcalls.types.input_stream import AudioPiped
 import yt_dlp
 
 # إعدادات الحساب المساعد الأساسية وتوكن البوت
