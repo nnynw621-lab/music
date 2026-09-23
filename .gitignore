@@ -1,0 +1,7 @@
+# Secrets and runtime state
+cookies.txt
+*.cookies
+*.session
+bot_data.json
+.env
+__pycache__/
