@@ -8,11 +8,11 @@ from pytgcalls import PyTgCalls
 from pytgcalls.types import AudioPiped
 import yt_dlp
 
-API_ID = 6
-API_HASH = "eb06d4abfb49dc3eeb1aeb98ae0f581e"
-
-SESSION_FILE = "assistant_session.txt"
-DATA_FILE = "bot_data.json"
+API_ID = int(os.getenv("API_ID", "6"))
+API_HASH = os.getenv("API_HASH", "eb06d4abfb49dc3eeb1aeb98ae0f581e")
+SESSION_FILE = os.getenv("SESSION_FILE", "assistant_session.txt")
+DATA_FILE = os.getenv("DATA_FILE", "bot_data.json")
+DEVELOPER_ID = int(os.getenv("DEVELOPER_ID", "123456789"))
 
 app = Client("music_bot_main", api_id=API_ID, api_hash=API_HASH)
 call_py = None
@@ -25,11 +25,11 @@ def load_data():
     with open(DATA_FILE, "r", encoding="utf-8") as f:
       return json.load(f)
   return {
-      "developer_id": 123456789,  # ⚠️ استبدل هذا الرقم بأيدي المطور الأساسي
+      "developer_id": DEVELOPER_ID,
       "admins": [],
       "banned_users": [],
       "users": [],
-      "forced_subs": [],  # تخزين قنوات/روابط الاشتراك الإجباري
+      "forced_subs": [],
   }
 
 
@@ -111,11 +111,11 @@ async def start_command(client, message):
     return
 
   # لوحة تحكم العضو (المجاني - مجرد من الصلاحيات تماماً) مع الصورة المطلوبة
-  photo_url = "https://envs.sh/i/XYZ.jpg"  # 🖼️ رابط الصورة الافتراضية للترحيب (يمكنك استبداله برابط صورتك)
+  photo_url = "https://envs.sh/i/XYZ.jpg"
 
   member_keyboard = InlineKeyboardMarkup([
       [InlineKeyboardButton("➕ اضفني لقناتك/كروبك", url=f"https://t.me/{bot_username}?startgroup=true")],
-      [InlineKeyboardButton("🎵 شغل", url="https://t.me/YourDeveloperChannel")],  # رابط كليشة النشر للمطور
+      [InlineKeyboardButton("🎵 شغل", url="https://t.me/YourDeveloperChannel")],
       [InlineKeyboardButton("❌ إغلاق", callback_data="close")],
   ])
 
@@ -127,7 +127,6 @@ async def start_command(client, message):
   try:
     await message.reply_photo(photo=photo_url, caption=caption, reply_markup=member_keyboard)
   except Exception:
-    # في حال تعذر إرسال الصورة يتم إرسال النص مباشرة كبديل آمن
     await message.reply(caption, reply_markup=member_keyboard)
 
 
@@ -283,4 +282,3 @@ async def main():
 
 if __name__ == "__main__":
   asyncio.get_event_loop().run_until_complete(main())
-
