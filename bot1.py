@@ -13,6 +13,7 @@ API_HASH = os.getenv("API_HASH", "eb06d4abfb49dc3eeb1aeb98ae0f581e")
 SESSION_FILE = os.getenv("SESSION_FILE", "assistant_session.txt")
 DATA_FILE = os.getenv("DATA_FILE", "bot_data.json")
 DEVELOPER_ID = int(os.getenv("DEVELOPER_ID", "123456789"))
+COOKIES_FILE = os.getenv("COOKIES_FILE", "cookies.txt")
 
 app = Client("music_bot_main", api_id=API_ID, api_hash=API_HASH)
 call_py = None
@@ -211,12 +212,23 @@ async def play_music_handler(client, message):
   msg = await message.reply(f"🔍 **جاري البحث وجلب الأغنية من يوتيوب:**\n🎵 {query}...")
 
   try:
+    cookies_path = os.getenv("COOKIES_FILE", "cookies.txt")
     ydl_opts = {
         "format": "bestaudio/best",
         "default_search": "ytsearch1",
-        "extractor_args": {"youtube": {"player_client": ["android"]}},
         "quiet": True,
+        "noplaylist": True,
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "web", "tv_embedded"]
+            }
+        }
     }
+
+    if os.path.exists(cookies_path):
+      ydl_opts["cookiefile"] = cookies_path
+    else:
+      print("⚠️ ملف cookies.txt غير موجود — بعض فيديوهات YouTube قد ترفض الاستخراج بدون كوكيز.")
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
       info = ydl.extract_info(query, download=False)
