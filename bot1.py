@@ -2,7 +2,6 @@ import asyncio
 import json
 import os
 from pyrogram import Client, filters, idle
-from pyrogram.errors import SessionPasswordNeeded
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from pytgcalls import PyTgCalls
 from pytgcalls.types import AudioPiped
@@ -13,14 +12,11 @@ API_HASH = os.getenv("API_HASH", "eb06d4abfb49dc3eeb1aeb98ae0f581e")
 SESSION_FILE = os.getenv("SESSION_FILE", "assistant_session.txt")
 DATA_FILE = os.getenv("DATA_FILE", "bot_data.json")
 DEVELOPER_ID = int(os.getenv("DEVELOPER_ID", "123456789"))
-COOKIES_FILE = os.getenv("COOKIES_FILE", "cookies.txt")
 
 app = Client("music_bot_main", api_id=API_ID, api_hash=API_HASH)
 call_py = None
-user_states = {}
 
 
-# --- نظام قاعدة البيانات المحلية ---
 def load_data():
   if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r", encoding="utf-8") as f:
@@ -44,11 +40,6 @@ def is_admin_or_dev(user_id):
   return user_id == data["developer_id"] or user_id in data["admins"]
 
 
-# ==========================================
-# لوحات التحكم الإدارية والأزرار الملونة
-# ==========================================
-
-
 def main_admin_keyboard():
   return InlineKeyboardMarkup([
       [InlineKeyboardButton("🔵 1- القسم المتقدم (المشرفين)", callback_data="adv_menu")],
@@ -58,7 +49,6 @@ def main_admin_keyboard():
   ])
 
 
-# 1. القسم المتقدم (المشرفين)
 def advanced_keyboard():
   return InlineKeyboardMarkup([
       [InlineKeyboardButton("🟢 إضافة مشرف", callback_data="add_admin")],
@@ -68,7 +58,6 @@ def advanced_keyboard():
   ])
 
 
-# 2. زر الإحصائيات
 def stats_keyboard():
   return InlineKeyboardMarkup([
       [InlineKeyboardButton("🔴 الأعضاء المحظورين", callback_data="stat_banned")],
@@ -78,7 +67,6 @@ def stats_keyboard():
   ])
 
 
-# 4. زر إدارة الاشتراكات الإجبارية
 def forced_sub_keyboard():
   return InlineKeyboardMarkup([
       [InlineKeyboardButton("🟢 إضافة قناة أو كروب عام (يجب أن يكون مشرفاً)", callback_data="sub_add_public")],
@@ -88,22 +76,15 @@ def forced_sub_keyboard():
   ])
 
 
-# ==========================================
-# لوحة تحكم العضو (أمر /start)
-# ==========================================
 @app.on_message(filters.command("start"))
 async def start_command(client, message):
   user_id = message.from_user.id
   data = load_data()
-
-  # تسجيل المستخدم في قاعدة البيانات
   if user_id not in data["users"]:
     data["users"].append(user_id)
     save_data(data)
 
   bot_username = (await client.get_me()).username
-
-  # التحقق إذا كان المستخدم مطوراً أو مشرفاً لإظهار لوحة التحكم الخاصة بهم
   if is_admin_or_dev(user_id):
     await message.reply(
         f"مرحباً بك يا مطور/مشرف {message.from_user.mention} ⚡️\nإليك لوحة التحكم الخاصة بالإدارة:",
@@ -111,29 +92,18 @@ async def start_command(client, message):
     )
     return
 
-  # لوحة تحكم العضو (المجاني - مجرد من الصلاحيات تماماً) مع الصورة المطلوبة
-  photo_url = "https://envs.sh/i/XYZ.jpg"
-
   member_keyboard = InlineKeyboardMarkup([
       [InlineKeyboardButton("➕ اضفني لقناتك/كروبك", url=f"https://t.me/{bot_username}?startgroup=true")],
       [InlineKeyboardButton("🎵 شغل", url="https://t.me/YourDeveloperChannel")],
       [InlineKeyboardButton("❌ إغلاق", callback_data="close")],
   ])
-
   caption = (
       f"أهلاً بك عزيزي {message.from_user.mention} في بوت الأغاني والمكالمات الصوتية 🎧\n\n"
       "اختر أحد الأزرار أدناه للبدء:"
   )
-
-  try:
-    await message.reply_photo(photo=photo_url, caption=caption, reply_markup=member_keyboard)
-  except Exception:
-    await message.reply(caption, reply_markup=member_keyboard)
+  await message.reply(caption, reply_markup=member_keyboard)
 
 
-# ==========================================
-# معالجة تفاعلات الأزرار واللوحات الإدارية
-# ==========================================
 @app.on_callback_query()
 async def panel_callback_handler(client, callback_query):
   data_cb = callback_query.data
@@ -142,44 +112,24 @@ async def panel_callback_handler(client, callback_query):
   if data_cb == "close":
     await callback_query.message.delete()
     return
-
   if not is_admin_or_dev(user_id):
-    await callback_query.answer("⚠️ عذراً، هذه الأزرار مخصصة للمشرفين والمطور فقط!", show_alert=True)
+    await callback_query.answer("⚠️ هذه الأزرار مخصصة للمشرفين والمطور فقط!", show_alert=True)
     return
 
   if data_cb == "main_menu":
     await callback_query.message.edit_text("🎛️ **لوحة التحكم الرئيسية للإدارة:**", reply_markup=main_admin_keyboard())
-
   elif data_cb == "adv_menu":
-    await callback_query.message.edit_text(
-        "⚙️ **القسم المتقدم (إدارة المشرفين):**\nاختر العملية المطلوبة:",
-        reply_markup=advanced_keyboard(),
-    )
-
+    await callback_query.message.edit_text("⚙️ **القسم المتقدم:**\nاختر العملية المطلوبة:", reply_markup=advanced_keyboard())
   elif data_cb == "stats_menu":
-    await callback_query.message.edit_text(
-        "📊 **لوحة الإحصائيات العامة:**\nاختر القسم المطلوب لعرضه:",
-        reply_markup=stats_keyboard(),
-    )
-
+    await callback_query.message.edit_text("📊 **لوحة الإحصائيات العامة:**", reply_markup=stats_keyboard())
   elif data_cb == "sub_menu":
-    await callback_query.message.edit_text(
-        "📢 **إدارة الاشتراكات الإجبارية:**\nاختر نوع الاشتراك المراد إضافته:",
-        reply_markup=forced_sub_keyboard(),
-    )
-
+    await callback_query.message.edit_text("📢 **إدارة الاشتراكات الإجبارية:**", reply_markup=forced_sub_keyboard())
   elif data_cb == "list_admins":
     data = load_data()
     admins = data["admins"]
-    dev_id = data["developer_id"]
-    text = f"👑 **المطور الأساسي:** `{dev_id}`\n\n🛡️ **المشرفون المضافون:**\n"
-    if admins:
-      for adm in admins:
-        text += f"• `{adm}`\n"
-    else:
-      text += "لا يوجد مشرفين مضافين حالياً."
+    text = f"👑 **المطور الأساسي:** `{data['developer_id']}`\n\n🛡️ **المشرفون المضافون:**\n"
+    text += "".join(f"• `{adm}`\n" for adm in admins) if admins else "لا يوجد مشرفون مضافون حالياً."
     await callback_query.message.edit_text(text, reply_markup=advanced_keyboard())
-
   elif data_cb == "stat_general":
     data = load_data()
     text = (
@@ -190,14 +140,10 @@ async def panel_callback_handler(client, callback_query):
         f"📢 قنوات الاشتراك الإجباري: `{len(data['forced_subs'])}`"
     )
     await callback_query.message.edit_text(text, reply_markup=stats_keyboard())
-
   else:
-    await callback_query.answer("⚙️ جاري تفعيل هذا القسم قريباً...", show_short=True)
+    await callback_query.answer("⚙️ هذا القسم قيد التطوير حالياً.", show_alert=True)
 
 
-# ==========================================
-# تشغيل الأغاني من يوتيوب عبر المكالمة الصوتية
-# ==========================================
 @app.on_message(filters.command(["تشغيل", "شغل", "play"], prefixes=["/", "!", ""]) & filters.group)
 async def play_music_handler(client, message):
   query = message.text
@@ -206,54 +152,49 @@ async def play_music_handler(client, message):
   query = query.strip()
 
   if not query:
-    await message.reply("⚠️ يرجى كتابة اسم الأغنية بعد الأمر.\nمثال: `تشغيل تخون بيه`")
+    await message.reply("⚠️ اكتب اسم الأغنية بعد الأمر.\nمثال: `تشغيل تخون بيه`")
     return
 
-  msg = await message.reply(f"🔍 **جاري البحث وجلب الأغنية من يوتيوب:**\n🎵 {query}...")
+  msg = await message.reply(f"🔍 **جاري البحث بدون كوكيز:**\n🎵 {query}...")
 
   try:
-    cookies_path = os.getenv("COOKIES_FILE", "cookies.txt")
+    # يعمل بدون cookies.txt. YouTube قد يحظر بعض الطلبات، لذلك نعرض رسالة مفهومة.
     ydl_opts = {
         "format": "bestaudio/best",
         "default_search": "ytsearch1",
         "quiet": True,
         "noplaylist": True,
+        "nocheckcertificate": True,
         "extractor_args": {
             "youtube": {
-                "player_client": ["android", "web", "tv_embedded"]
+                "player_client": ["android", "web_safari", "tv_embedded"]
             }
-        }
+        },
     }
 
-    if os.path.exists(cookies_path):
-      ydl_opts["cookiefile"] = cookies_path
-    else:
-      print("⚠️ ملف cookies.txt غير موجود — بعض فيديوهات YouTube قد ترفض الاستخراج بدون كوكيز.")
-
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-      info = ydl.extract_info(query, download=False)
-      if "entries" in info:
-        info = info["entries"][0]
-
-      audio_url = info["url"]
+      info = ydl.extract_info(f"ytsearch1:{query}", download=False)
+      entries = info.get("entries") or []
+      if not entries or not entries[0]:
+        await msg.edit_text("❌ لم يتم العثور على نتيجة. جرّب اسم أغنية آخر.")
+        return
+      info = entries[0]
+      audio_url = info.get("url")
+      if not audio_url:
+        await msg.edit_text("❌ لم يتم العثور على رابط صوت صالح لهذه الأغنية.")
+        return
       title = info.get("title", query)
-      duration_sec = info.get("duration", 0)
-
-      if duration_sec:
-        mins, secs = divmod(int(duration_sec), 60)
-        duration_str = f"{mins:02d}:{secs:02d}"
-      else:
-        duration_str = "03:45"
-
-    chat_id = message.chat.id
+      duration_sec = info.get("duration") or 0
+      mins, secs = divmod(int(duration_sec), 60)
+      duration_str = f"{mins:02d}:{secs:02d}" if duration_sec else "غير معروف"
 
     if not os.path.exists(SESSION_FILE):
-      await msg.edit_text("❌ **لم يتم تسجيل حساب مساعد للبوت بعد!**")
+      await msg.edit_text("❌ ملف assistant_session.txt غير موجود. سجّل حساب المساعد أولاً.")
       return
 
     global call_py
     if call_py is None:
-      with open(SESSION_FILE, "r") as f:
+      with open(SESSION_FILE, "r", encoding="utf-8") as f:
         session_str = f.read().strip()
       assistant_client = Client(
           "assistant_session_name", api_id=API_ID, api_hash=API_HASH, session_string=session_str
@@ -262,14 +203,7 @@ async def play_music_handler(client, message):
       call_py = PyTgCalls(assistant_client)
       await call_py.start()
 
-    await call_py.join_group_call(chat_id, AudioPiped(audio_url))
-
-    caption_text = (
-        f"🎵 - تم تشغيل : <b>{title}</b>\n"
-        f"⏱ - المدة : <b>{duration_str}</b>\n"
-        f"🔊 - الحالة : يعمل الآن في المكالمة الصوتية 🟢"
-    )
-
+    await call_py.join_group_call(message.chat.id, AudioPiped(audio_url))
     player_keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("تخطي ⏭", callback_data="skip"),
@@ -278,16 +212,24 @@ async def play_music_handler(client, message):
         ],
         [InlineKeyboardButton("❌ إغلاق", callback_data="close")],
     ])
+    await msg.edit_text(
+        f"🎵 - تم تشغيل: <b>{title}</b>\n⏱ - المدة: <b>{duration_str}</b>\n🔊 - الحالة: يعمل الآن 🟢",
+        reply_markup=player_keyboard,
+    )
 
-    await msg.edit_text(caption_text, reply_markup=player_keyboard)
-
-  except Exception as e:
-    await msg.edit_text(f"❌ حدث خطأ أثناء التشغيل:\n`{e}`")
+  except yt_dlp.utils.DownloadError:
+    await msg.edit_text(
+        "❌ YouTube رفض الطلب لأنه يريد التحقق من أنك لست روبوتاً.\n"
+        "جرّب أغنية أخرى أو رابطاً مباشراً؛ هذا الإصدار يعمل بدون كوكيز، لكن YouTube لا يضمن السماح لكل الطلبات."
+    )
+  except Exception as error:
+    print(f"playback error: {error}")
+    await msg.edit_text("❌ تعذر تشغيل الأغنية حالياً. تأكد من FFmpeg وملف جلسة المساعد ثم جرّب مرة أخرى.")
 
 
 async def main():
   await app.start()
-  print("🚀 البوت ولوحة التحكم والاشتراكات الإجبارية تعمل بكفاءة تامة!")
+  print("🚀 البوت يعمل بدون cookies.txt")
   await idle()
   await app.stop()
 
