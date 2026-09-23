@@ -8,16 +8,26 @@ from pytgcalls import PyTgCalls
 from pytgcalls.types import AudioPiped
 import yt_dlp
 
-API_ID = 6
-API_HASH = "eb06d4abfb49dc3eeb1aeb98ae0f581e"
+# --- قراءة المتغيرات من البيئة (أمان وسهولة تامة) ---
+API_ID = int(os.getenv("API_ID", "6"))
+API_HASH = os.getenv("API_HASH", "eb06d4abfb49dc3eeb1aeb98ae0f581e")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "ضع_توكن_البوت_هنا_إذا_لم_تحب_استخدام_متغيرات_البيئة")
+DEVELOPER_ID = int(os.getenv("DEVELOPER_ID", "123456789")) # أيدي المطور الخاص بك
 
 SESSION_FILE = "assistant_session.txt"
 DATA_FILE = "bot_data.json"
 
-app = Client("music_bot_main", api_id=API_ID, api_hash=API_HASH)
+# تشغيل البوت الرئيسي مع التوكن
+app = Client(
+    "music_bot_main",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    bot_token=BOT_TOKEN
+)
+
 call_py = None
-user_states = {}  # لتتبع حالات إدخال البيانات
-temp_logins = {}  # لتخزين بيانات تسجيل الدخول المؤقتة للمساعدين (رقم الهاتف، الكود، العميل المؤقت)
+user_states = {}  
+temp_logins = {}  
 
 
 # --- نظام قاعدة البيانات المحلية ---
@@ -26,11 +36,11 @@ def load_data():
     with open(DATA_FILE, "r", encoding="utf-8") as f:
       return json.load(f)
   return {
-      "developer_id": 123456789,  # ⚠️ استبدل هذا الرقم بأيدي المطور الأساسي الخاص بك
+      "developer_id": DEVELOPER_ID,
       "admins": [],
       "banned_users": [],
       "users": [],
-      "forced_subs": [],  # قائمة قنوات الاشتراك الإجباري
+      "forced_subs": [],  
       "broadcast_config": {
           "media_url": "https://envs.sh/i/XYZ.jpg",
           "btn1_text": "SG SOURCE",
@@ -58,7 +68,6 @@ def is_admin_or_dev(user_id):
 # لوحات التحكم الرئيسية والأقسام الملونة المطلوبة
 # ==========================================
 
-# القائمة الرئيسية للوحة التحكم
 def main_admin_keyboard():
   return InlineKeyboardMarkup([
       [InlineKeyboardButton("🔵 1- القسم المتقدم (المشرفين)", callback_data="adv_menu"), InlineKeyboardButton("🟡 2- لوحة الإحصائيات العامة", callback_data="stats_menu")],
@@ -68,7 +77,6 @@ def main_admin_keyboard():
   ])
 
 
-# 1. القسم المتقدم (إدارة المشرفين) - ملونة بالألوان المطلوبة
 def advanced_keyboard():
   return InlineKeyboardMarkup([
       [InlineKeyboardButton("🟢 إضافة مشرف", callback_data="add_admin"), InlineKeyboardButton("🔴 إزالة مشرف", callback_data="remove_admin")],
@@ -76,7 +84,6 @@ def advanced_keyboard():
   ])
 
 
-# 2. لوحة الإحصائيات العامة - ملونة بالألوان المطلوبة
 def stats_keyboard():
   return InlineKeyboardMarkup([
       [InlineKeyboardButton("🔴 الأعضاء المحظورين", callback_data="stat_banned"), InlineKeyboardButton("🟢 الأعضاء المتواجدين (الحاضرين)", callback_data="stat_active")],
@@ -84,7 +91,6 @@ def stats_keyboard():
   ])
 
 
-# 4. إدارة الاشتراكات الإجبارية - ملونة بالألوان المطلوبة
 def forced_sub_keyboard():
   return InlineKeyboardMarkup([
       [InlineKeyboardButton("🟢 إضافة قناة أو كروب عام (يجب أن يكون البوت مشرفاً)", callback_data="sub_add_public")],
@@ -94,7 +100,6 @@ def forced_sub_keyboard():
   ])
 
 
-# لوحة تحكم كليشة النشر والأزرار
 def broadcast_template_keyboard():
   return InlineKeyboardMarkup([
       [InlineKeyboardButton("🖼️ 1- التحكم بالصورة أو الفيديو", callback_data="edit_media")],
@@ -105,7 +110,6 @@ def broadcast_template_keyboard():
   ])
 
 
-# لوحة إدارة المساعدين المستقلة
 def assistants_keyboard():
   return InlineKeyboardMarkup([
       [InlineKeyboardButton("➕ إضافة مساعد جديد (تفاعلي)", callback_data="add_assistant_interactive")],
@@ -114,7 +118,6 @@ def assistants_keyboard():
   ])
 
 
-# لوحة أزرار المشغل للأغاني مطابقة للتصميم
 def get_player_keyboard():
   data = load_data()
   bc = data["broadcast_config"]
@@ -128,7 +131,7 @@ def get_player_keyboard():
 
 
 # ==========================================
-# دالة التحقق من الاشتراك الإجباري (Force Subscription)
+# دالة التحقق من الاشتراك الإجباري
 # ==========================================
 async def check_forced_subscriptions(client, user_id):
   data = load_data()
@@ -155,7 +158,7 @@ async def check_forced_subscriptions(client, user_id):
 
 
 # ==========================================
-# لوحة تحكم العضو (أمر /start) مع فحص الاشتراك الإجباري
+# أوامر البدء واللوحات
 # ==========================================
 @app.on_message(filters.command("start"))
 async def start_command(client, message):
@@ -203,7 +206,7 @@ async def start_command(client, message):
 
 
 # ==========================================
-# معالجة تفاعلات الأزرار واللوحات الإدارية
+# معالجة الأزرار التفاعلية للأدممنية
 # ==========================================
 @app.on_callback_query()
 async def panel_callback_handler(client, callback_query):
@@ -370,7 +373,7 @@ async def panel_callback_handler(client, callback_query):
 
 
 # ==========================================
-# معالجة تفاعلات النصوص والمساعدين التفاعليين
+# المدخلات النصية وتسجيل المساعد التفاعلي
 # ==========================================
 @app.on_message(filters.text & ~filters.command(["start"]))
 async def handle_admin_text_inputs(client, message):
@@ -381,7 +384,6 @@ async def handle_admin_text_inputs(client, message):
   state = user_states[user_id]
   data = load_data()
 
-  # نظام تسجيل المساعد التفاعلي خطوة بخطوة
   if state == "waiting_assistant_phone":
     phone_number = message.text.strip()
     msg_wait = await message.reply("⏳ جاري إرسال كود التحقق إلى حسابك على تليجرام...")
@@ -398,7 +400,7 @@ async def handle_admin_text_inputs(client, message):
       user_states[user_id] = "waiting_assistant_code"
       await msg_wait.edit_text(
           "✅ **تم إرسال كود التحقق بنجاح إلى رسائل تليجرام الرسمية.**\n\n"
-          "يرجى إرسال كود التحقق الآن (ملاحظة: يمكنك وضع مسافات بين الأرقام أو كتابته مباشرة):"
+          "يرجى إرسال كود التحقق الآن (يمكنك وضع مسافات أو كتابته مباشرة):"
       )
     except Exception as e:
       await msg_wait.edit_text(f"❌ حدث خطأ أثناء إرسال الكود:\n`{e}`\n\nأرسل /start للعودة.")
@@ -465,7 +467,6 @@ async def handle_admin_text_inputs(client, message):
     except Exception as e:
       await msg_wait.edit_text(f"❌ كلمة المرور غير صحيحة أو حدث خطأ:\n`{e}`")
 
-  # الحالات الأخرى للمشرفين والكليشة
   elif state == "waiting_add_admin":
     try:
       new_adm = int(message.text.strip())
@@ -534,7 +535,7 @@ async def handle_admin_text_inputs(client, message):
 
 
 # ==========================================
-# أوامر التشغيل عبر الاتصال والبحث والتنزيل
+# تشغيل الأغاني والبحث والتنزيل
 # ==========================================
 @app.on_message(filters.command(["تشغيل", "شغل", "بحث", "play"], prefixes=["/", "!", ""]) & filters.group)
 async def play_music_handler(client, message):
@@ -580,13 +581,17 @@ async def play_music_handler(client, message):
 
     chat_id = message.chat.id
     if not os.path.exists(SESSION_FILE):
-      await msg.edit_text("❌ **لم يتم تسجيل حساب مساعد للبوت بعد!**")
-      return
+      data_check = load_data()
+      if not data_check["assistants"]:
+        await msg.edit_text("❌ **لم يتم تسجيل أي حساب مساعد للبوت بعد! أضف مساعداً من لوحة المطور.**")
+        return
+      session_str = data_check["assistants"][0]
+    else:
+      with open(SESSION_FILE, "r") as f:
+        session_str = f.read().strip()
 
     global call_py
     if call_py is None:
-      with open(SESSION_FILE, "r") as f:
-        session_str = f.read().strip()
       assistant_client = Client(
           "assistant_session_name", api_id=API_ID, api_hash=API_HASH, session_string=session_str
       )
@@ -671,7 +676,7 @@ async def download_audio_handler(client, message):
 
 async def main():
   await app.start()
-  print("🚀 البوت واللوحة التفاعلية لتسجيل المساعدين تعمل بكفاءة تامة!")
+  print("🚀 البوت يعمل بنجاح باستخدام متغيرات البيئة!")
   await idle()
   await app.stop()
 
