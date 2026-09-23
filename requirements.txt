@@ -1,5 +1,5 @@
+PyTelegramBotAPI
 pyrogram
-py-tgcalls
+py-tgcalls>=2.2.0,<3
 yt-dlp
-tgcrypto
-pytelegrambotapi
+TgCrypto
